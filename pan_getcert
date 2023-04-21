@@ -1,0 +1,90 @@
+#!/bin/bash
+
+# Usage info
+show_help() {
+cat << EOF
+Usage: ${0##*/} [-hv] [-f OUTFILE] [FILE]
+This script issues a certificate using ipa-getcert and upload it to a Palo Alto
+firewall or Panorama. Additionally it ensures the renewal process will update
+the certificate on the appliance.
+
+    -h          display this help and exit
+    -f OUTFILE  write the result to OUTFILE instead of standard output.
+    -v          verbose mode. Can be used multiple times for increased
+                verbosity.
+EOF
+}
+
+## Variables
+PAN_MGMT=<FW_MGMT_FQDN>
+API_KEY=/etc/ipa/.panrc
+CERT_NAME=FreeIPA_DOMAIN.LOCAL
+GP_PORTAL_TLS_PROFILE=GP_PORTAL_PROFILE
+GP_GW_TLS_PROFILE=GP_EXT_GW_PROFILE
+TEMP_PWD=$(openssl rand -hex 15)
+TEMP_PFX="/etc/ipa/ssl/getcert_pkcs12.pfx"
+GETCERT="/usr/local/bin/pan_getcert"
+output_file=""
+verbose=0
+
+OPTIND=1
+# Resetting OPTIND is necessary if getopts was used previously in the script.
+# It is a good idea to make OPTIND local if you process options in a function.
+
+while getopts hvf: opt; do
+    case $opt in
+        h)
+            show_help
+            exit 0
+            ;;
+        v)  verbose=$((verbose+1))
+            ;;
+        f)  output_file=$OPTARG
+            ;;
+        *)
+            show_help >&2
+            exit 1
+            ;;
+    esac
+done
+shift "$((OPTIND-1))"   # Discard the options and sentinel --
+
+# Everything that's left in "$@" is a non-option.  In our case, a FILE to process.
+printf 'verbose=<%d>\noutput_file=<%s>\nLeftovers:\n' "$verbose" "$output_file"
+printf '<%s>\n' "$@"
+
+## Requirements: openssl, pan-python, ipa-getcert
+
+## Create the folder for the certificate chains
+if [ -d /etc/ipa ]; then
+  sudo mkdir -p /etc/ipa/ssl
+  sudo chmod 700 /etc/ipa/ssl
+else
+  echo '/etc/ipa/ does not exist. This host must tbe an active FreeIPA client'
+  exit 1
+fi
+
+#sudo ipa-getcert request -N ${PAN_MGMT} -K HTTP/${PAN_MGMT} \
+#  -k /etc/ssl/private/${PAN_MGMT}.key \
+#  -f /etc/ssl/certs/${PAN_MGMT}.crt \
+#  -D ${PAN_MGMT} -C { $GETCERT $PAN_MGMT }
+
+# Create a password protected PKCS12 file
+sudo openssl pkcs12 -export -out '$TEMP_PFX' -inkey '/etc/ssl/private/${PAN_MGMT}.key' -in '/etc/ssl/certs/${PAN_MGMT}.crt' \
+  -certfile '/etc/ipa/ssl/${PAM_MGMT}_chain.pem' -passout pass:$TEMP_PWD
+
+# Upload it to the firewall
+curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " "
+curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " "
+sudo rm '$TEMP_PFX'
+
+# If you use a separate SSL/TLS Service Profile for the GlobalProtect Portal and Gateway, uncomment the next line and update the
+# 'GP_PORTAL_TLS_PROFILE' variable with the name of your GlobalProtect Portal's SSL/TLS Service Profile, as it appears in your management GUI.
+panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_PORTAL_TLS_PROFILE']"
+
+# If you use a separate SSL/TLS Service Profile for the GlobalProtect Portal and Gateway, uncomment the next line and update the
+# 'GP_GW_TLS_PROFILE' variable with the name of your GlobalProtect Gateway's SSL/TLS Service Profile, as it appears in your management GUI. If you use a single SSL/TLS Service Profile for BOTH the Portal and Gateway, you can comment the following line out, or set the value of 'GP_GW_TLS_PROFILE' to the value of 'GP_PORTAL_TLS_PROFILE'
+panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_GW_TLS_PROFILE']"
+
+# Save the changes
+panxapi.py -h $PAN_MGMT -K $API_KEY -C '' --sync
