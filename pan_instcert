@@ -1,0 +1,163 @@
+#!/bin/bash
+
+## Usage info
+show_help() {
+cat << EOF
+Usage: ${0##*/} [-hv] -n CERT_NAME [OPTIONS] FQDN
+This script uploads a certificate issued by ipa-getcert to a Palo Alto firewall
+or Panorama.
+
+    FQDN                Fully qualified name of the Palo Alto firewall or Panorama
+                        interface. Must be reachable from this host on port TCP/443.
+
+OPTIONS:
+    -n CERT_NAME        REQUIRED. Name of the certificate in PanOS configuration.
+
+    -s PROFILE_NAME     Apply the certificate to a SSL/TLS Service Profile.
+                        (For example for a management interface).
+    -p [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
+                        used on the Portal. Omit this option to avoid automatic linking.
+                        Default profile name: GP_PORTAL_PROFILE
+    -g [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
+                        used on the Gateway. Omit this option to avoid automatic linking.
+                        Default proifile name: GP_EXT_GW_PROFILE
+
+    -h                  Display this help and exit.
+    -v                  Verbose mode. Can be used multiple times for increased verbosity.
+EOF
+}
+
+## Fixed variables
+GET_CERT="/usr/local/bin/pan_getcert"
+#INST_CERT="/usr/local/bin/pan_instcert"
+API_KEY="/etc/ipa/.panrc"
+TEMP_PWD=$(openssl rand -hex 15)
+TEMP_PFX="/tmp/getcert_pkcs12.pfx"
+VERBOSE=0
+OPTIND=1
+
+## Read/interpret optional arguments
+while getopts n:s:pgvh opt; do
+    case $opt in
+        n)  CERT_NAME=$OPTARG
+            ;;
+        s)  SSL_TLS_PROFILE=$OPTARG
+            ;;
+        p)  eval nextopt=${!OPTIND}
+            if [[ -n $nextopt && $nextopt != -* ]] ; then
+                OPTIND=$((OPTIND+1))
+                if [[ "$nextopt" =~ (^[\w-]+$) ]]; then
+                    GP_PORTAL_TLS_PROFILE=$nextopt
+                else
+                    printf 'ERROR: Invalid GP_PORTAL_TLS_PROFILE given: <%s>\n' "$nextopt"
+                    printf 'Ensure the name does not contain dots or spaces.\n'
+                    exit 2
+                fi
+            else
+                GP_PORTAL_TLS_PROFILE=GP_PORTAL_PROFILE
+            fi
+            ;;
+        p)  eval nextopt=${!OPTIND}
+            if [[ -n $nextopt && $nextopt != -* ]] ; then
+                OPTIND=$((OPTIND+1))
+                if [[ "$nextopt" =~ (^[\w-]+$) ]]; then
+                    GP_GW_TLS_PROFILE=$nextopt
+                else
+                    printf 'ERROR: Invalid GP_GW_TLS_PROFILE given: <%s>\n' "$nextopt"
+                    printf 'Ensure the name does not contain dots or spaces.\n'
+                    exit 3
+                fi
+            else
+                GP_GW_TLS_PROFILE=GP_EXT_GW_PROFILE
+            fi
+            ;;
+        v)  VERBOSE=$((VERBOSE+1))
+            ;;
+        h)  show_help
+            exit 0
+            ;;
+        *)  show_help >&2
+            exit 1
+            ;;
+    esac
+done
+shift "$((OPTIND-1))"   # Discard the options and sentinel --
+
+# Check that a certificate name was given
+if [[ -z $CERT_NAME ]]; then
+    printf 'ERROR: missing -n, a certificate name is required.\n\n'
+    show-help >&2
+    exit 1
+fi
+
+# Check that a single valid FQDN was parsed.
+if [[ "$@" =~ (?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}$) ]]; then
+    PAN_MGMT="${@,,}"
+    printf 'verbose=<%d>\nCERT_NAME=<%s>\nFQDN=<%s>\n' "$VERBOSE" "$CERT_NAME" "$PAN_MGMT"
+    (( $VERBOSE > 0 )) && printf 'GP_PORTAL_TLS_PROFILE=<%s>\nGP_GW_TLS_PROFILE=<%s>\n' "$GP_PORTAL_TLS_PROFILE" "$GP_GW_TLS_PROFILE"
+    if ! nc -z $PAN_MGMT 443 2>/dev/null; then
+        printf 'ERROR: Palo Alto device unreachable on TCP/443 at: <%s>' "$PAN_MGMT"
+        exit 4
+    fi
+else
+    printf 'ERROR: A valid FQDN is required to issue a certificate.\n'
+    printf 'Parsed string: <%s>\n\n' "$@"
+    show_help >&2
+    exit 4
+fi
+
+## Requirements
+# Installed packages: openssl, pan-python
+
+# Ensure the host is enrolled into an IPA server and the folder for certificate chain storage exists.
+REALM=$(realm discover -n)
+if [ $? -eq 0 ]; then
+    echo 'ERROR: Realm not found. This script must be run from an enrolled FreeIPA client.'
+    exit 5
+fi
+if [ -d /etc/ipa ]; then
+    sudo mkdir -m 0700 -p /etc/ipa/ssl
+    if [ $? -eq 0 ]; then
+        printf 'ERROR: /etc/ipa/ssl could not be created.\n'
+        printf 'Ensure you have sudo rights to create this folder, or have it created for you\nowned by root and with privileges set to: 0700.\n'
+    exit 6
+else
+    echo 'ERROR: /etc/ipa/ does not exist. This script must be run from an enrolled FreeIPA client.'
+    exit 5
+fi
+
+## Upload and install the certificate to Palo Alto firewall or Panorama.
+# Verify state of the certificate is MONITORING
+if ! [[ $(sudo ipa-getcert status -f /etc/ssl/certs/${CERT_NAME}.crt) =~ "MONITORING" ]]; then
+    printf 'ERROR: Problem encountered with the requested certificate.\nInstallation aborted.\n'
+    exit 10
+# Verify both certificate and key files exist
+elif [[ ! -f '/etc/ssl/private/${PAN_MGMT}.key' ]] || [[ ! -f '/etc/ssl/certs/${PAN_MGMT}.crt' ]]; then
+    printf 'ERROR: Missing certificate or key files. Check if the following files exist:\n'
+    printf 'Key file:<%s>\nCert file:<%s>\n' "/etc/ssl/private/${PAN_MGMT}.key" "/etc/ssl/certs/${PAN_MGMT}.crt"
+    exit 11
+fi
+
+# Create a password protected PKCS12 file
+sudo openssl pkcs12 -export -out '$TEMP_PFX' -inkey '/etc/ssl/private/${PAN_MGMT}.key' -in '/etc/ssl/certs/${PAN_MGMT}.crt' \
+    -certfile '/etc/ipa/ssl/${PAM_MGMT}_chain.pem' -passout pass:$TEMP_PWD
+
+# Upload it to the firewall
+curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " "
+curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " "
+sudo rm '$TEMP_PFX'
+
+# Install/update the certificate to given SSL/TLS Profile(s)
+if [[ ! -z $SSL_TLS_PROFILE ]]; then
+    panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$SSL_TLS_PROFILE']"
+else
+    if [[ ! -z $GP_PORTAL_TLS_PROFILE ]]; then
+        panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_PORTAL_TLS_PROFILE']"
+    fi
+    if [[ ! -z $GP_GW_TLS_PROFILE ]]; then
+        panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_GW_TLS_PROFILE']"
+    fi
+fi
+
+## Save/commit the changes
+panxapi.py -h $PAN_MGMT -K $API_KEY -C '' --sync
