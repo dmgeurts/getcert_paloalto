@@ -9,10 +9,10 @@ script to deploy the certificate to a Palo Alto firewall or Panorama.
 
     FQDN                Fully qualified name of the Palo Alto firewall or Panorama
                         interface. Must be reachable from this host on port TCP/443.
-
-OPTIONS:
     -c CERT_CN          REQUIRED. Common Name of the certificate (must be an FQDN). Will
                         be added as to the certificate as a SAN.
+
+OPTIONS:
     -n CERT_NAME        Name of the certificate in PanOS configuration. Defaults to the
                         certificate Common Name.
     -s PROFILE_NAME     Apply the certificate to a SSL/TLS Service Profile.
@@ -23,8 +23,8 @@ OPTIONS:
     -g [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
                         used on the Gateway. Omit this option to avoid automatic linking.
                         Default proifile name: GP_EXT_GW_PROFILE
-    -Y                  Append the current year '_YYYY' to the certificate name. And
-                        when the certificate is automatically renewed.
+    -Y                  Append the current year '_YYYY' to the certificate name. Also
+                        when the certificate is automatically renewed by ipa-getcert.
 
     -h                  Display this help and exit.
     -v                  Verbose mode.
@@ -40,14 +40,11 @@ VERBOSE=0
 OPTIND=1
 
 ## Read/interpret optional arguments
-while getopts d:ns:pgvh opt; do
+while getopts c:n:s:pgvh opt; do
     case $opt in
         c)  CN_FQDN=$OPTARG
-        n)  eval nextopt=${!OPTIND}
-            if [[ -n $nextopt && $nextopt != -* ]] ; then
-                OPTIND=$((OPTIND+1))
-                CERT_NAME=$nextopt
-            else
+            ;;
+        n)  CERT_NAME=$OPTARG
             ;;
         Y)  YEAR="_$(date +'%Y')"
             ;;
@@ -93,17 +90,27 @@ while getopts d:ns:pgvh opt; do
 done
 shift "$((OPTIND-1))"   # Discard the options and sentinel --
 
-# Check that a certificate name was given
-if [[ -z $CERT_NAME ]]; then
-    printf 'ERROR: missing -n, a certificate name is required.\n\n'
+# Check that a Common Name name was given
+if [[ -z $CERT_CN ]]; then
+    printf 'ERROR: Missing -c, a certificate requires a Common Name.'
     show-help >&2
     exit 1
+elif [[ "$CERT_CN" =~ (?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}$) ]]; then
+    $CERT_CN=${CERT_CN,,}
+    if (( $VERBOSE > 0 )); then
+        printf 'Certificate Common Name: <%s>' "$CERT_CN"
+    fi
+fi
+if [[ -z $CERT_NAME ]]; then
+    $CERT_NAME=$CERT_CN
+elif (( $VERBOSE > 0 )); then
+    printf 'Parsed certificate Name: <%s>' "$CERT_NAME"
+fi
 
-# Check that a single valid FQDN was parsed.
+# Check that a single valid FQDN was parsed for the Palo Alto API interface
 if [[ "$@" =~ (?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}$) ]]; then
     PAN_MGMT="${@,,}"
-    printf 'verbose=<%d>\nCERT_NAME=<%s>\nFQDN=<%s>\n' "$VERBOSE" "$CERT_NAME$YEAR" "$PAN_MGMT"
-    (( $VERBOSE > 0 )) && printf 'GP_PORTAL_TLS_PROFILE=<%s>\nGP_GW_TLS_PROFILE=<%s>\n' "$GP_PORTAL_TLS_PROFILE" "$GP_GW_TLS_PROFILE"
+    printf 'verbose=<%d>\nCERT_CN=<%s>\nCERT_NAME=<%s>\nFQDN=<%s>\n' "$VERBOSE" "$CERT_CN" "$CERT_NAME$YEAR" "$PAN_MGMT"
     if ! nc -z $PAN_MGMT 443 2>/dev/null; then
         printf 'ERROR: Palo Alto device unreachable at: https://<%s>/\n' "$PAN_MGMT"
         exit 4
@@ -113,6 +120,15 @@ else
     printf 'Parsed string: <%s>\n\n' "$@"
     show_help >&2
     exit 4
+fi
+
+# Verbose stdout of SSL/TLS profiles (if any)
+if (( $VERBOSE > 0 )) && [[ ! -z $SSL_TLS_PROFILE ]]; then
+    printf 'SSL/TLS profile SSL_TLS_PROFILE=<%s>\n' "$SSL_TLS_PROFILE"
+elif (( $VERBOSE > 0 )) && [[ ! -z $GP_PORTAL_TLS_PROFILE || ! -z $GP_GW_TLS_PROFILE ]]; then
+    printf 'SSL/TLS profile GP_PORTAL_TLS_PROFILE=<%s>\nSSL/TLS profile GP_GW_TLS_PROFILE=<%s>\n' "$GP_PORTAL_TLS_PROFILE" "$GP_GW_TLS_PROFILE"
+elif (( $VERBOSE > 0 )); then
+    echo "No SSL/TLS profiles parsed."
 fi
 
 ## Requirements
@@ -148,21 +164,23 @@ else
 fi
 # The Service Principals are assumed to exist, if they don't the status will not be MONITORING.
 if [[ -z $YEAR ]]; then
-    sudo ipa-getcert request -N $CERT_NAME -K HTTP/$CERT_NAME -k /etc/ssl/private/${CERT_NAME}.key -f /etc/ssl/certs/${CERT_NAME}.crt \
-    -D $CERT_NAME -C "$INST_CERT -n $CERT_NAME $INST_OPTS $PAN_MGMT"
+    sudo ipa-getcert request -N $CERT_CN -K HTTP/$CERT_CN -k /etc/ssl/private/${CERT_CN}.key -f /etc/ssl/certs/${CERT_CN}.crt \
+    -D $CERT_CN -C "$INST_CERT -n $CERT_NAME $INST_OPTS $PAN_MGMT"
 else
-    sudo ipa-getcert request -N $CERT_NAME -K HTTP/$CERT_NAME -k /etc/ssl/private/${CERT_NAME}.key -f /etc/ssl/certs/${CERT_NAME}.crt \
-    -D $CERT_NAME -C "$INST_CERT -n ${CERT_NAME}_"'$(date +"%Y")'" $INST_OPTS $PAN_MGMT"
+    sudo ipa-getcert request -N $CERT_CN -K HTTP/$CERT_CN -k /etc/ssl/private/${CERT_CN}.key -f /etc/ssl/certs/${CERT_CN}.crt \
+    -D $CERT_CN -C "$INST_CERT -n ${CERT_NAME}_"'$(date +"%Y")'" $INST_OPTS $PAN_MGMT"
 fi
 if (( $VERBOSE > 0 )); then
-    printf 'Certificate requested for: <%s>' "$CERT_NAME"
+    printf 'Certificate requested for: <%s>' "$CERT_CN"
 fi
 
 # Verify state of the certificate is MONITORING
-if ! [[ $(sudo ipa-getcert status -f /etc/ssl/certs/${CERT_NAME}.crt) =~ "MONITORING" ]]; then
-    printf 'ERROR: Problem encountered with the requested certificate.\nManual intervention required.\n'
+CERT_STATUS=$(sudo ipa-getcert status -f /etc/ssl/certs/${CERT_CN}.crt -v)
+if ! [[ $CERT_STATUS =~ "MONITORING" ]]; then
+    printf 'ERROR: Problem encountered with the requested certificate.\nManual intervention required for: <%s>.\n' "$CERT_CN"
+    printf 'Certificate request <%s>\n' "${CERT_STATUS,}"
     exit 10
 else
-    printf 'SUCCESS: Certificate issued for: <%s>.\nProceeding with installation to: <%s>.\n' "$CERT_NAME" "$PAN_MGMT"
-    #$INST_CERT -n $CERT_NAME$YEAR $INST_OPTS $PAN_MGMT" # post-renew may work on initial issue of the certificate -- TO BE VERIFIED
+    printf 'SUCCESS: Certificate issued for: <%s>.\nProceeding with installation to: <%s>.\n' "$CERT_CN" "$PAN_MGMT"
+    #$INST_CERT -n $CERT_NAME$YEAR $INST_OPTS $PAN_MGMT" # post-save may work on initial issue of the certificate -- TO BE VERIFIED
 fi
