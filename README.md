@@ -56,80 +56,98 @@ The following will detail how to automate the ipa-getcert certificate process fo
   ```
 
 
-# The Script
-The script is located in the file "pan_getcert" --> https://github.com/dmgeurts/getcert_paloalto/edit/master/pan_getcert
-
+# The Scripts
+There are two scripts:
++ "pan_getcert" --> https://github.com/dmgeurts/getcert_paloalto/edit/master/pan_getcert
+  + Obtains a certificate from FreeIPA and sets the post-save to use pan_instcert for automatic installation of a renewed certificate.
++ "pan_instcert" --> https://github.com/dmgeurts/getcert_paloalto/edit/master/pan_instcert
+  + Installs and optionally attaches a certificate to an SSL/TLS Profile.
+    + Management interface SSL/TLS Profile
+    + Global Protect certificates can be attached to one or two SSL/TLS Profiles, as required.
 
 # How It Works
-### This small bash script performs the following actions:
+### pan_getcert performs the following actions:
 1. Uses the privileges set in FreeIPA (managed by) to call ipa-getcert and request a certificate from FreeIPA.
 2. ipa-getcert will automatically renew a certificate when it's due, s long as the FQDN DNS record resolves, and the host and Service Principal still exist in FreeIPA.
-3. Randomly generates a certificate passphrase using “openssl rand”.
-4. Creates a temporary, password-protected PKCS12 cert file named “getcert_pkcs12.pfx” from the individual private and public keys issued by ipa-getcert.
-5. Uploads the temporary PKCS12 file to the firewall using the randomly-generated passphrase. Certificate name is set to variable $CERT_NAME.
-6. Deletes the temporary PKCS12 certificate from linux host.
-7. (Optionally) Sets the certificate used within the GlobalProtect Portal’s SSL/TLS profile to the name of the new LetsEncrypt certificate.
-8. (Optionally) Sets the certificate used within the GlobalProtect Gateway’s SSL/TLS profile to the name of the new LetsEncrypt certificate.
-9. Commits the candidate configuration (synchronously) and reports for the commit result.
+3. Calls pan_instcert to get the certificate installed.
+4. Sets port-renewal to run pan_instcert for automated installation of a renewed certificate.
+
+### pan_instcert performs the following actions:
+1. Randomly generates a certificate passphrase using “openssl rand”.
+2. Creates a temporary, password-protected PKCS12 cert file named “getcert_pkcs12.pfx” from the individual private and public keys issued by ipa-getcert, and places this file in /etc/opa/ssl. This folder is created if it doesn't exist.
+3. Uploads the temporary PKCS12 file to the firewall using the randomly-generated passphrase.
+  + (Optionally) adds a year (in 4-digit notation) to the certificate name.
+4. Deletes the temporary PKCS12 certificate from the linux host.
+5. (Optionally) Sets the certificate used within the SSL/TLS profile to the name of the new LetsEncrypt certificate.
+  + The SSL/TLS profile name can be parsed.
+  + Or the GlobalProtect Portal and GlobalProtect Gateway SSL/TLS profiles can set.
+6. Commits the candidate configuration (synchronously) and reports for the commit result.
+
+### Script options
+The scripts use the following options:
+
+```
+Usage: ${0##*/} [-hv] -c CERT_CN [-n CERT_NAME] [-Y] [OPTIONS] FQDN
+This script requests a certificate from FreeIPA using ipa-getcert and calls a partner
+script to deploy the certificate to a Palo Alto firewall or Panorama.
+    FQDN                Fully qualified name of the Palo Alto firewall or Panorama
+                        interface. Must be reachable from this host on port TCP/443.
+    -c CERT_CN          REQUIRED. Common Name of the certificate (must be an FQDN). Will
+                        be added as to the certificate as a SAN.
+OPTIONS:
+    -n CERT_NAME        Name of the certificate in PanOS configuration. Defaults to the
+                        certificate Common Name.
+    -s PROFILE_NAME     Apply the certificate to a SSL/TLS Service Profile.
+                        (For example for a management interface).
+    -p [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
+                        used on the Portal. Omit this option to avoid automatic linking.
+                        Default profile name: GP_PORTAL_PROFILE
+    -g [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
+                        used on the Gateway. Omit this option to avoid automatic linking.
+                        Default proifile name: GP_EXT_GW_PROFILE
+    -Y                  Append the current year '_YYYY' to the certificate name. Also
+                        when the certificate is automatically renewed by ipa-getcert.
+    -h                  Display this help and exit.
+    -v                  Verbose mode.
+```
+
+**Note:** `-Y` and -c are unique to pan_getcert.
+
++ *CERT_NAME*: The name you wish to give the certificate on the device (Palo Alto Networks GUI:  Device –> Certificate Management –> Certificates)
++ **-p** _GP_PORTAL_TLS_PROFILE_: The name of the GlobalProtect SSL/TLS Service Profile used on the Portal.
++ **-g** _GP_GW_TLS_PROFILE_: The name of the GlobalProtect SSL/TLS Service Profile used on the Gateway. For single Portal/Gateway deployments using a single SSL/TLS profile, this may be the same as “GP_PORTAL_TLS_PROFILE”.
 
 
 # Automated Renewal and Installation
-ipa-getcert can be given a command to execute on renewal, this is used to upload renewed certificates rather than using cron.
-The command will upload the renewed certificates, modify the SSL/TLS Service Profiles (if required), and commit the configuration.
+ipa-getcert requests the certificate with the post-save option so that no cronjob is needed to install renewed certificates.
+The post-save will upload the renewed certificates, and take the same actions against SSL/TLS Service Profiles as when the certificate was initially installed. If the -Y option is given the certificate name will be appended with the year ("_YYYY"), otherwise the certificate will be overwritten in the Palo Alto forewall or Panorama configuration.
 
-To make this a bit more adaptable to different scenarios, I have included the following variables:
-+ *CERT_NAME*: The name you wish to give the certificate on the device (Palo Alto Networks GUI:  Device –> Certificate Management –> Certificates)
-+ *GP_PORTAL_TLS_PROFILE*: The name of the GlobalProtect SSL/TLS Service Profile used on the Portal.
-+ *GP_GW_TLS_PROFILE*: The name of the GlobalProtect SSL/TLS Service Profile used on the Gateway. For single Portal/Gateway deployments using a single SSL/TLS profile, this may be the same as “GP_PORTAL_TLS_PROFILE”.
 
 ### Notes
-+ As best-practice, you should use separate SSL/TLS Service Profiles for each Portal and Gateway. This script assumes you have followed best-practices, but will also work with single-profile configurations.
++ As best-practice, one should use separate SSL/TLS Service Profiles for each Portal and Gateway. These scripts assume best-practices are followed, but will also work with single-profile configurations.
 + With Palo Alto Networks Firewalls specifically, updating the SSL/TLS Service Profiles is only required when the name of the certificate referenced by the SSL/TLS Service Profile changes.
-+ If the SSL/TLS Service Profiles have been updated with the name of the FreeIPA certificate (and you do not plan on timestamping or otherwise changing the certificate name), no modifications are required when a certificate is renewed. If you choose to append a timestamp or rename the certificate, you will need to programmatically update the SSL/TLS Service profiles.
-  + To update the SSL/TLS Service Profile(s), uncomment lines 20 (for a single SSL/TLS Profile) and 22 (for two SSL/TLS Profiles).
-  ```
-  panxapi.py -h $PAN_MGMT -K $API_KEY -S "$CERT_NAME" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_PORTAL_TLS_PROFILE']"
-  panxapi.py -h $PAN_MGMT -K $API_KEY -S "$CERT_NAME" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_GW_TLS_PROFILE']"
-  ```
-  + **If your certificate name does not change, you can safely leave these commands enabled if desired.**
+  + pan_instcert won't know if it's being called to install or update a certificate. Hence the SSL/TLS profile is always updated if parsed.
 
 
 # Prepare the Script for Execution
-+ In an environment with centralised credentials it's best to not run code under a user that may be removed. Thus install the code to a common location like: `/usr/local/bin`, which is the assumed location.
-  + Ensure the pan_getcert is executable
++ In an environment with centralised credentials it's best to not run code under a user that may be removed. Install the code to a common location: `/usr/local/bin` is assumed location. If you'd like to use a different location, change variable INST_CERT in pan_getcert.
+  + Ensure the pan_getcert and pan_instcert are executable
     ```
-    sudo chmod +x /usr/local/bin/pan_getcert
+    sudo chmod +x /usr/local/bin/pan_{get,inst}cert
     ```
 + Similarly the `.panrc` file is best placed under etc, for example: `/etc/ipa/.panrc`, which is the assumed location.
 + Ensure there are no extensions after the filename. In most cases, only underscores and dashes are supported
 
 
-# Creating a Cronjob for Fully-Automated Certificate Installation
-### Note: This article is written for Ubuntu
+# Crontab
+Not required; ipa-getcert certificate monitoring takes care of running post-save after renewing certificates.
 
-1. Create a custom cronjob to execute the certificate renewal at your desired interval:
-  ```
-  sudo vi /etc/cron.d/pan_certbot_cron
-  ```
-2. Insert the following within the /etc/cron.d/pan_certbot file to ensure the cron generates a log file to debug any issues:
-  + The following cronjob will run twice weekly (Midnight Weds and Saturday).  To change execution frequency, modify the schedule to meet your needs.
-  + The log file will be timestamped and stored in /var/log/pan_certbot.log
-  + **Change “/home/psiri/pan_certbot” to the full path of the script**
-  ```
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-SHELL=/bin/bash
-
-0 0 * * 3,6 root (/bin/date && /home/psiri/pan_certbot) >> /var/log/pan_certbot.log 2>&1
-```
 
 # Validate Your Runs [TBC]
-```
-cat /var/log/pan_getcert.log
-```
+`cat /var/log/pan_getcert.log`
+
 If successful, you should see something similar to the following:
 ```
-Saving debug log to /var/log/letsencrypt/letsencrypt.log
-Plugins selected: Authenticator dns-cloudflare, Installer None
 Renewing an existing certificate
 IMPORTANT NOTES:
  - Congratulations! Your certificate and chain have been saved at:
@@ -179,12 +197,12 @@ set: success [code="20"]: "command succeeded"
 commit: success: "Configuration committed successfully"
 ```
 
-You should also be able to check the following locations on the Palo Alto Networks firewall for additional confirmation:
+Also check the following locations on the Palo Alto Networks firewall for additional confirmation:
 **Monitor –> Logs –> Configuration**
-You should see 3-5 operations, depending on whether or not you chose to modify the SSL/TLS service profile(s).  In my setup (PA-850), it takes 7-8 seconds to renew, upload, and commit the configuration (not including actual commit time):
+There should be 3-5 operations shown, depending on whether or not the SSL/TLS service profile(s) are being updated.
 
-1. A web upload to /config/shared/certificate
-2. A web upload to /config/shared/certificate/entry[@name=’LetsEncryptWildcard’]
+1. A web upload to /config/shared/certificate.
+2. A web upload to /config/shared/certificate/entry[@name=’FQDN’] under the FreeIPA root CA certificate.
 3. A web “set” command to /config/shared/ssl-tls-service-profile/entry[@name=’GP_PORTAL_PROFILE’]
 4. A web “set” command to /config/shared/ssl-tls-service-profile/entry[@name=’GP_EXT_GW_PROFILE’]
-5. And a web “commit” operation
+5. And a web “commit” operation.
