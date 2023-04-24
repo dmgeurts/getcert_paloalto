@@ -9,10 +9,9 @@ or Panorama.
 
     FQDN                Fully qualified name of the Palo Alto firewall or Panorama
                         interface. Must be reachable from this host on port TCP/443.
-
-OPTIONS:
     -n CERT_NAME        REQUIRED. Name of the certificate in PanOS configuration.
 
+OPTIONS:
     -s PROFILE_NAME     Apply the certificate to a SSL/TLS Service Profile.
                         (For example for a management interface).
     -p [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
@@ -29,7 +28,6 @@ EOF
 
 ## Fixed variables
 GET_CERT="/usr/local/bin/pan_getcert"
-#INST_CERT="/usr/local/bin/pan_instcert"
 API_KEY="/etc/ipa/.panrc"
 TEMP_PWD=$(openssl rand -hex 15)
 TEMP_PFX="/tmp/getcert_pkcs12.pfx"
