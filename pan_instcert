@@ -23,7 +23,7 @@ OPTIONS:
                         Default proifile name: GP_EXT_GW_PROFILE
 
     -h                  Display this help and exit.
-    -v                  Verbose mode. Can be used multiple times for increased verbosity.
+    -v                  Verbose mode.
 EOF
 }
 
@@ -146,18 +146,30 @@ sudo openssl pkcs12 -export -out '$TEMP_PFX' -inkey '/etc/ssl/private/${PAN_MGMT
 curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " "
 curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " "
 sudo rm '$TEMP_PFX'
+if (( $VERBOSE > 0 )); then
+    printf '<%s> has been set deployed to: <%s>' "$CERT_NAME" "$PAN_MGMT"
+fi
 
 # Install/update the certificate to given SSL/TLS Profile(s)
 if [[ ! -z $SSL_TLS_PROFILE ]]; then
     panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$SSL_TLS_PROFILE']"
+    PROFILES=$SSL_TLS_PROFILE
 else
     if [[ ! -z $GP_PORTAL_TLS_PROFILE ]]; then
         panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_PORTAL_TLS_PROFILE']"
+        PROFILES=$GP_PORTAL_TLS_PROFILE
     fi
     if [[ ! -z $GP_GW_TLS_PROFILE ]]; then
         panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_GW_TLS_PROFILE']"
+        PROFILES="$PROFILES $GP_GW_TLS_PROFILE"
     fi
+fi
+if (( $VERBOSE > 0 )) && [[ ! -z $PROFILES ]]; then
+    printf '<%s> has been set on SSL/TLS profile: <%s>' "$CERT_NAME" "$PROFILES"
 fi
 
 ## Save/commit the changes
 panxapi.py -h $PAN_MGMT -K $API_KEY -C '' --sync
+if (( $VERBOSE > 0 )); then
+    printf 'The configuration on <%s> has been saved/synced.' "$PAN_MGMT"
+fi
