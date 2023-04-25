@@ -92,7 +92,7 @@ shift "$((OPTIND-1))"   # Discard the options and sentinel --
 
 # Check that a Common Name name was given
 if [[ -z $CERT_CN ]]; then
-    printf 'ERROR: Missing -c, a certificate requires a Common Name.'
+    printf 'ERROR: Missing -c, a certificate requires a Common Name.\n\n'
     show_help >&2
     exit 1
 elif [[ "$CERT_CN" =~ (?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}$) ]]; then
