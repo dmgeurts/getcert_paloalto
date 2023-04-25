@@ -23,12 +23,13 @@ The following will detail how to automate the ipa-getcert certificate process fo
 
 ![diagram](./img/getcert_paloalto%20interaction.png)
 
+*) The Linux host doesn't need to be Ubuntu, I should have used a Tux logo instead...
+
 ### Before getting started, the following are required:
 + A FreeIPA server with Dogtag CA.
 
 + A linux-based container, VM, or host with reachability to your device’s management interface and the following packages installed:
-  + Host enrolled onto FreeIPA server.
-    + ipa-getcert - part of ipa-client-install.
+  + ipa-getcert - part of ipa-client-install on a FreeIPA enrolled host.
   + pan-python (https://pypi.org/project/pan-python/)
     + _**Note:** pan-os-python is a Palo Alto managed Python library, but doesn't cater to managing certificates AFAIK. (https://github.com/PaloAltoNetworks/pan-os-python)_
   ```
