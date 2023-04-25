@@ -130,13 +130,13 @@ The post-save will upload the renewed certificates, and take the same actions ag
 
 
 # Prepare the Script for Execution
-+ In an environment with centralised credentials it's best to not run code under a user that may be removed. Install the code to a common location: `/usr/local/bin` is assumed location. If you'd like to use a different location, change variable INST_CERT in pan_getcert.
-  + Ensure the pan_getcert and pan_instcert are executable
++ In an environment with centralised credentials it's best to not run code under a user that may be removed. Install the code to a common location: `/usr/local/bin` is assumed location. When using a different location, change variable INST_CERT in pan_getcert accordingly.
+  + Install and ensure pan_getcert and pan_instcert are executable:
     ```
+    sudo cp getcert_paloalto/pan_{get,inst}cert /usr/local/bin/
     sudo chmod +x /usr/local/bin/pan_{get,inst}cert
     ```
-+ Similarly the `.panrc` file is best placed under etc, for example: `/etc/ipa/.panrc`, which is the assumed location.
-+ Ensure there are no extensions after the filename. In most cases, only underscores and dashes are supported
++ The file `.panrc` is best placed under etc. `/etc/ipa/.panrc` is assumed, and is configurable in pan_getcert.
 
 
 # Crontab
