@@ -50,10 +50,12 @@ The following will detail how to automate the ipa-getcert certificate process fo
   panxapi.py -h PAN_MGMT_IP_OR_FQDN -l USERNAME:'PASSWORD' -k
   ```
 + It's recommended to store the API key in a securely stored file (.panrc):
-  + As a good practice, avoid storing your API key directly in your script:
+  + When using centralised authentication, consider whether the API user should be a user or dedicated API account.
+    + Using a user account will mean the API calls stop working when the user is removed!
+  + `/etc/ipa/.panrc` is the assumed location:
   ```
-  panxapi.py -h PAN_MGMT_IP_OR_FQDN -l USERNAME:'PASSWORD' -k >> ~/.panrc
-  chmod 600 ~/.panrc
+  panxapi.py -h PAN_MGMT_IP_OR_FQDN -l USERNAME:'PASSWORD' -k | sudo tee /etc/ipa/.panrc
+  sudo chmod 600 /etc/ipa/.panrc
   ```
 
 
