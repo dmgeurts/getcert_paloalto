@@ -23,7 +23,7 @@ The following will detail how to automate the ipa-getcert certificate process fo
 
 ![diagram](./img/getcert_paloalto%20interaction.png)
 
-*) The Linux host doesn't need to be Ubuntu, I should have used a Tux logo instead...
+<sup>\*</sup>) _The Linux host doesn't need to be Ubuntu, I should have used a Tux logo instead..._
 
 ### Before getting started, the following are required:
 + A FreeIPA server with Dogtag CA.
