@@ -91,8 +91,8 @@ There are two scripts:
 ### pan_getcert performs the following actions:
 1. Uses the privileges set in FreeIPA (managed by) to call ipa-getcert and request a certificate from FreeIPA.
 2. ipa-getcert will automatically renew a certificate when it's due, s long as the FQDN DNS record resolves, and the host and Service Principal still exist in FreeIPA.
-3. Calls pan_instcert to get the certificate installed.
-4. Sets port-renewal to run pan_instcert for automated installation of a renewed certificate.
+3. Calls pan_instcert to for certificate installation.
+4. Sets the post-save command to pan_instcert with the same parameters as issued to pan_getcert, for automated installation of renewed certificates.
 
 ### pan_instcert performs the following actions:
 1. Randomly generates a certificate passphrase using “openssl rand”.
@@ -100,10 +100,11 @@ There are two scripts:
 3. Uploads the temporary PKCS12 file to the firewall using the randomly-generated passphrase.
   + (Optionally) adds a year (in 4-digit notation) to the certificate name.
 4. Deletes the temporary PKCS12 certificate from the linux host.
-5. (Optionally) Sets the certificate used within the SSL/TLS profile to the name of the new LetsEncrypt certificate.
-  + The SSL/TLS profile name can be parsed.
-  + Or the GlobalProtect Portal and GlobalProtect Gateway SSL/TLS profiles can set.
+5. (Optionally) applies the certificate to up to two SSL/TLS Profiles.
+  + Single SSL/TLS Profile: For example for the Management UI SSL/TLS profile.
+  + Two SSL/TLS Prtofiles: For example for GlobalProtect Portal and GlobalProtect Gateway SSL/TLS Profiles.
 6. Commits the candidate configuration (synchronously) and reports for the commit result.
+7. Logs all output to /var/log/pan_instcert.log
 
 ### Script options
 The scripts use the following options:
@@ -112,32 +113,28 @@ The scripts use the following options:
 Usage: ${0##*/} [-hv] -c CERT_CN [-n CERT_NAME] [-Y] [OPTIONS] FQDN
 This script requests a certificate from FreeIPA using ipa-getcert and calls a partner
 script to deploy the certificate to a Palo Alto firewall or Panorama.
-    FQDN                Fully qualified name of the Palo Alto firewall or Panorama
-                        interface. Must be reachable from this host on port TCP/443.
-    -c CERT_CN          REQUIRED. Common Name (Subject) of the certificate (must be a
-                        FQDN). Will also present in the certificate as a SAN.
+
+    FQDN              Fully qualified name of the Palo Alto firewall or Panorama
+                      interface. Must be reachable from this host on port TCP/443.
+    -c CERT_CN        REQUIRED. Common Name (Subject) of the certificate (must be a
+                      FQDN). Will also present in the certificate as a SAN.
+
 OPTIONS:
-    -n CERT_NAME        Name of the certificate in PanOS configuration. Defaults to the
-                        certificate Common Name.
-    -s PROFILE_NAME     Apply the certificate to a SSL/TLS Service Profile.
-                        (For example for a management interface).
-    -p [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
-                        used on the Portal.
-                        Default profile name: GP_PORTAL_PROFILE
-    -g [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
-                        used on the Gateway.
-                        Default proifile name: GP_EXT_GW_PROFILE
-    -Y                  Append the current year '_YYYY' to the certificate name. Also
-                        when the certificate is automatically renewed by ipa-getcert.
-    -h                  Display this help and exit.
-    -v                  Verbose mode.
+    -n CERT_NAME      Name of the certificate in PanOS configuration. Defaults to the
+                      certificate Common Name.
+    -Y                Append the current year '_YYYY' to the certificate name. Also
+                      when the certificate is automatically renewed by ipa-getcert.
+
+    -p PROFILE_NAME   Apply the certificate to a (primary) SSL/TLS Service Profile.
+    -s PROFILE_NAME   Apply the certificate to a (secondary) SSL/TLS Service Profile.
+
+    -h                Display this help and exit.
+    -v                Verbose mode.
 ```
 
-**Note:** `-Y` and -c are unique to pan_getcert.
+**Note:** `-Y` is unique to pan_getcert.
 
 + **-n** _CERT_NAME_: The name you wish to give the certificate on the device (Palo Alto Networks GUI:  Device –> Certificate Management –> Certificates)
-+ **-p** _GP_PORTAL_TLS_PROFILE_: The name of the GlobalProtect SSL/TLS Service Profile used on the Portal.
-+ **-g** _GP_GW_TLS_PROFILE_: The name of the GlobalProtect SSL/TLS Service Profile used on the Gateway. For single Portal/Gateway deployments using a single SSL/TLS profile, this may be the same as “GP_PORTAL_TLS_PROFILE”.
 
 
 # Automated Renewal and Installation
