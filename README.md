@@ -122,10 +122,10 @@ OPTIONS:
     -s PROFILE_NAME     Apply the certificate to a SSL/TLS Service Profile.
                         (For example for a management interface).
     -p [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
-                        used on the Portal. Omit this option to avoid automatic linking.
+                        used on the Portal.
                         Default profile name: GP_PORTAL_PROFILE
     -g [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
-                        used on the Gateway. Omit this option to avoid automatic linking.
+                        used on the Gateway.
                         Default proifile name: GP_EXT_GW_PROFILE
     -Y                  Append the current year '_YYYY' to the certificate name. Also
                         when the certificate is automatically renewed by ipa-getcert.
