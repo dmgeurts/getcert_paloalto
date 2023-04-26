@@ -151,7 +151,7 @@ sudo ipa-getcert list [-i Request_ID | -f Path_to_cert_file]
 
 
 ### Notes
-+ As best-practice, one should use separate SSL/TLS Service Profiles for each Portal and Gateway. These scripts assume best-practices are followed, but will also work with single-profile configurations.
++ As best-practice, one should use separate SSL/TLS Service Profiles for Portal and Gateway. These scripts assume best-practices are followed, but will also work with single-profile configurations.
 + With Palo Alto Networks Firewalls specifically, updating the SSL/TLS Service Profiles is only required when the name of the certificate referenced by the SSL/TLS Service Profile changes.
   + pan_instcert won't know if it's being called to install or update a certificate. Hence the SSL/TLS profile is always updated if parsed.
 
