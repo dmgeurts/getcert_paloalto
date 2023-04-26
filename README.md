@@ -52,11 +52,30 @@ The following will detail how to automate the ipa-getcert certificate process fo
 + It's recommended to store the API key in a securely stored file (.panrc):
   + When using centralised authentication, consider whether the API user should be a user or dedicated API account.
     + Using a user account will mean the API calls stop working when the user is removed!
-  + `/etc/ipa/.panrc` is the assumed location:
+  + `/etc/ipa/.panrc` is the assumed location.
+  + The following format is detailed at https://github.com/kevinsteves/pan-python/blob/master/doc/panrc.rst
   ```
-  panxapi.py -h PAN_MGMT_IP_OR_FQDN -l USERNAME:'PASSWORD' -k | sudo tee /etc/ipa/.panrc
-  sudo chmod 600 /etc/ipa/.panrc
+  api_username=api-admin
+  api_password=strong-password
+  hostname=192.168.1.1
+  
+  # Generic API key
+  api_key=C2M1P2h1tDEz8zF3SwhF2dWC1gzzhnE1qU39EmHtGZM=
   ```
+  However, the location of this file is assumed to be `~/.panrc` by panxapi.py. There is a request to add an option to specify the location of this file: https://github.com/kevinsteves/pan-python/issues/53
+  + To create `.panrc`:
+    + First create an API user on the Palo Alto
+    + Use a strong password for this user
+    + Generate the API key with:
+    `panxapi.py -h PAN_MGMT_IP_OR_FQDN -l USERNAME:'PASSWORD' -k`
+    + Create the .panrc file, and enter the api_key as follows.
+    `sudo vi /etc/ipa/.panrc`
+    At a bare minimum it should look like:
+    ```
+    api_key=C2M1P2h1tDEz8zF3SwhF2dWC1gzzhnE1qU39EmHtGZM=
+    ```
+    + Secure the file:
+    `sudo chmod 600 /etc/ipa/.panrc`
 
 
 # The Scripts
@@ -95,8 +114,8 @@ This script requests a certificate from FreeIPA using ipa-getcert and calls a pa
 script to deploy the certificate to a Palo Alto firewall or Panorama.
     FQDN                Fully qualified name of the Palo Alto firewall or Panorama
                         interface. Must be reachable from this host on port TCP/443.
-    -c CERT_CN          REQUIRED. Common Name of the certificate (must be an FQDN). Will
-                        be added as to the certificate as a SAN.
+    -c CERT_CN          REQUIRED. Common Name (Subject) of the certificate (must be a
+                        FQDN). Will also present in the certificate as a SAN.
 OPTIONS:
     -n CERT_NAME        Name of the certificate in PanOS configuration. Defaults to the
                         certificate Common Name.
@@ -116,7 +135,7 @@ OPTIONS:
 
 **Note:** `-Y` and -c are unique to pan_getcert.
 
-+ *CERT_NAME*: The name you wish to give the certificate on the device (Palo Alto Networks GUI:  Device –> Certificate Management –> Certificates)
++ **-n** _CERT_NAME_: The name you wish to give the certificate on the device (Palo Alto Networks GUI:  Device –> Certificate Management –> Certificates)
 + **-p** _GP_PORTAL_TLS_PROFILE_: The name of the GlobalProtect SSL/TLS Service Profile used on the Portal.
 + **-g** _GP_GW_TLS_PROFILE_: The name of the GlobalProtect SSL/TLS Service Profile used on the Gateway. For single Portal/Gateway deployments using a single SSL/TLS profile, this may be the same as “GP_PORTAL_TLS_PROFILE”.
 
@@ -124,6 +143,11 @@ OPTIONS:
 # Automated Renewal and Installation
 ipa-getcert requests the certificate with the post-save option so that no cronjob is needed to install renewed certificates.
 The post-save will upload the renewed certificates, and take the same actions against SSL/TLS Service Profiles as when the certificate was initially installed. If the -Y option is given the certificate name will be appended with the year ("_YYYY"), otherwise the certificate will be overwritten in the Palo Alto forewall or Panorama configuration.
+
+Check the configured post-save command with:
+```
+sudo ipa-getcert list [-i Request_ID | -f Path_to_cert_file]
+```
 
 
 ### Notes
@@ -134,70 +158,68 @@ The post-save will upload the renewed certificates, and take the same actions ag
 
 # Prepare the Script for Execution
 + In an environment with centralised credentials it's best to not run code under a user that may be removed. Install the code to a common location: `/usr/local/bin` is assumed location. When using a different location, change variable INST_CERT in pan_getcert accordingly.
-  + Install and ensure pan_getcert and pan_instcert are executable:
-    ```
-    sudo cp getcert_paloalto/pan_{get,inst}cert /usr/local/bin/
-    sudo chmod +x /usr/local/bin/pan_{get,inst}cert
-    ```
-+ The file `.panrc` is best placed under etc. `/etc/ipa/.panrc` is assumed, and is configurable in pan_getcert.
+  + To configure an API user on a Palo Alto firewall:
+    + Add a local administrator (Device >> Administrators)
+      + Authentication Profile: None
+      + Set a strong password (only used to obtain the API key)
+      + Administrator Type: Role Based
+      + Profile: Create a new profile with the folowing rights (Device >> Admin Roles):
+        + Web UI - Disable everything
+        + XML API - Enable only:
+          + Configuration
+          + Operational Requests
+          + Commit
+          + Import
+        + Command Line - None
+        + REST API - Disable everything
++ Install and ensure pan_getcert and pan_instcert are executable:
+  ```
+  sudo cp getcert_paloalto/pan_{get,inst}cert /usr/local/bin/
+  sudo chmod +x /usr/local/bin/pan_{get,inst}cert
+  ```
++ Ensure `/etc/ipa/.panrc` exists, see above.
 
 
 # Crontab
 Not required; ipa-getcert certificate monitoring takes care of running post-save after renewing certificates.
 
 
-# Validate Your Runs [TBC]
-`cat /var/log/pan_getcert.log`
+# Validate Automated Renewals
+pan_instcert will log to `/var/log/pan_instcert.log`.
+
+pan_getcert doesn't log as it's expected to be run once (manually).
+```
+cat /var/log/pan_instcert.log
+```
 
 If successful, you should see something similar to the following:
 ```
-Renewing an existing certificate
-IMPORTANT NOTES:
- - Congratulations! Your certificate and chain have been saved at:
-   /etc/letsencrypt/live/bitbodyguard.com/fullchain.pem
-   Your key file has been saved at:
-   /etc/letsencrypt/live/bitbodyguard.com/privkey.pem
-   Your cert will expire on 2020-01-21. To obtain a new or tweaked
-   version of this certificate in the future, simply run certbot
-   again. To non-interactively renew *all* of your certificates, run
-   "certbot renew"
- - If you like Certbot, please consider supporting our work by:
-
-   Donating to ISRG / Let's Encrypt:   https://letsencrypt.org/donate
-   Donating to EFF:                    https://eff.org/donate-le
-
+[2023-04-26 14:13:53+00:00]: START of pan_instcert.
+Certificate Common Name: test.domain.local
+Parsed certificate Name: test.domain.local_2023
+  verbose=1
+  PAN_FQDN: fw01.domain.local
+SSL/TLS profile SSL_TLS_PROFILE: Tst_profile
   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
                                  Dload  Upload   Total   Spent    Left  Speed
-100  4536  100   125  100  4411     34   1204  0:00:03  0:00:03 --:--:--  1204
-<response status="success"><result>Successfully imported LetsEncryptWildcard into candidate configuration</result></response> 
+100  3342  100   121  100  3221    118   3146  0:00:01  0:00:01 --:--:--  3266
+<response status="success"><result>Successfully imported test.mm.eu_2025 into candidate configuration</result></response>
   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
                                  Dload  Upload   Total   Spent    Left  Speed
-100  4536  100   125  100  4411    103   3667  0:00:01  0:00:01 --:--:--  3666
-<response status="success"><result>Successfully imported LetsEncryptWildcard into candidate configuration</result></response> 
+100  3342  100   121  100  3221    118   3145  0:00:01  0:00:01 --:--:--  3266
+<response status="success"><result>Successfully imported test.mm.eu_2025 into candidate configuration</result></response>
+Finished uploading the certificate.
 set: success [code="20"]: "command succeeded"
-set: success [code="20"]: "command succeeded"
+test.domain.local_2023 has been set on SSL/TLS profile: Test_profile
 commit: success: "Configuration committed successfully"
+[2023-04-26 14:14:09+00:00]: END - Certificate installation done to: fw01.domain.local.
 ```
 
-If the cron was successful, but you have it a rate-limit, you will typically see the following:
+If the SSL/TLS Service Profile doesn't exist it will be created, but the following error will be shown and the commit will fail:
 ```
-Saving debug log to /var/log/letsencrypt/letsencrypt.log
-Plugins selected: Authenticator dns-cloudflare, Installer None
-Renewing an existing certificate
-An unexpected error occurred:
-There were too many requests of a given type :: Error creating new order :: too many certificates already issued for exact set of domains: *.bitbodyguard.com: see https://letsencrypt.org/docs/rate-limits/
-Please see the logfiles in /var/log/letsencrypt for more details.
-  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
-                                 Dload  Upload   Total   Spent    Left  Speed
-100  4536  100   125  100  4411    101   3582  0:00:01  0:00:01 --:--:--  3583
-Successfully imported LetsEncryptWildcard into candidate configuration 
-  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
-                                 Dload  Upload   Total   Spent    Left  Speed
-100  4536  100   125  100  4411    160   5678 --:--:-- --:--:-- --:--:--  5676
-Successfully imported LetsEncryptWildcard into candidate configuration 
-set: success [code="20"]: "command succeeded"
-set: success [code="20"]: "command succeeded"
-commit: success: "Configuration committed successfully"
+commit: success: "Validation Error:
+ ssl-tls-service-profile -> Test_profile  is missing 'protocol-settings'
+ ssl-tls-service-profile is invalid"
 ```
 
 Also check the following locations on the Palo Alto Networks firewall for additional confirmation:
@@ -205,7 +227,6 @@ Also check the following locations on the Palo Alto Networks firewall for additi
 There should be 3-5 operations shown, depending on whether or not the SSL/TLS service profile(s) are being updated.
 
 1. A web upload to /config/shared/certificate.
-2. A web upload to /config/shared/certificate/entry[@name=’FQDN’] under the FreeIPA root CA certificate.
-3. A web “set” command to /config/shared/ssl-tls-service-profile/entry[@name=’GP_PORTAL_PROFILE’]
-4. A web “set” command to /config/shared/ssl-tls-service-profile/entry[@name=’GP_EXT_GW_PROFILE’]
-5. And a web “commit” operation.
+2. A web upload to /config/shared/certificate/entry[@name=’FQDN(\_YYYY)’] under the FreeIPA root CA certificate.
+3. One or more web “set” commands to /config/shared/ssl-tls-service-profile/entry[@name=’YOUR_PROFILE(S)’]
+4. And a web “commit” operation.
