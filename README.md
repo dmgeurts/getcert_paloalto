@@ -189,27 +189,33 @@ pan_getcert doesn't log as it's expected to be run once (manually).
 cat /var/log/pan_instcert.log
 ```
 
-If successful, you should see something similar to the following:
+If successful, you should see something similar to the following (when using verbose):
 ```
-[2023-04-26 14:13:53+00:00]: START of pan_instcert.
-Certificate Common Name: test.domain.local
-Parsed certificate Name: test.domain.local_2023
-  verbose=1
-  PAN_FQDN: fw01.domain.local
-SSL/TLS profile SSL_TLS_PROFILE: Tst_profile
+[2023-04-27 12:27:31+00:00]: START of pan_instcert.
+Certificate Common Name: gp.domain.local
+Parsed certificate Name: gp.domain.local_2023
+PAN_FQDN: fw01.domain.local
+Primary SSL/TLS Profile name: GP_PORTAL_PROFILE
+Secondary SSL/TLS Profile name: GP_EXT_GW_PROFILE
+API key found in: /etc/ipa/.panrc
+Certmonger certificate state MONITORING, stuck: no.
+
   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
                                  Dload  Upload   Total   Spent    Left  Speed
-100  3342  100   121  100  3221    118   3146  0:00:01  0:00:01 --:--:--  3266
-<response status="success"><result>Successfully imported test.mm.eu_2025 into candidate configuration</result></response>
+100  3346  100   125  100  3221    154   3975 --:--:-- --:--:-- --:--:--  4130
+XML API output for crt: <response status="success"><result>Successfully imported v.gc.maizy.moe_2023 into candidate configuration</result></response>
+
   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
                                  Dload  Upload   Total   Spent    Left  Speed
-100  3342  100   121  100  3221    118   3145  0:00:01  0:00:01 --:--:--  3266
-<response status="success"><result>Successfully imported test.mm.eu_2025 into candidate configuration</result></response>
+100  3346  100   125  100  3221    170   4391 --:--:-- --:--:-- --:--:--  4564
+XML API output for key: <response status="success"><result>Successfully imported v.gc.maizy.moe_2023 into candidate configuration</result></response>
+
 Finished uploading the certificate.
 set: success [code="20"]: "command succeeded"
-test.domain.local_2023 has been set on SSL/TLS profile: Test_profile
+set: success [code="20"]: "command succeeded"
+gp.domain.local_2023 has been set on SSL/TLS Profile(s): GP_PORTAL_PROFILE GP_EXT_GW_PROFILE
 commit: success: "Configuration committed successfully"
-[2023-04-26 14:14:09+00:00]: END - Certificate installation done to: fw01.domain.local.
+[2023-04-27 12:29:03+00:00]: END - Certificate installation done to: fw01.domain.local
 ```
 
 If the SSL/TLS Service Profile doesn't exist it will be created, but the following error will be shown and the commit will fail:
