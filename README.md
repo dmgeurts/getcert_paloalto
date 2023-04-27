@@ -107,10 +107,9 @@ There are two scripts:
 7. Logs all output to /var/log/pan_instcert.log
 
 ### Script options
-The scripts use the following options:
-
+pan_getcert uses the following options:
 ```
-Usage: ${0##*/} [-hv] -c CERT_CN [-n CERT_NAME] [-Y] [OPTIONS] FQDN
+Usage: pan_getcert [-hv] -c CERT_CN [-n CERT_NAME] [-Y] [OPTIONS] FQDN
 This script requests a certificate from FreeIPA using ipa-getcert and calls a partner
 script to deploy the certificate to a Palo Alto firewall or Panorama.
 
@@ -122,8 +121,8 @@ script to deploy the certificate to a Palo Alto firewall or Panorama.
 OPTIONS:
     -n CERT_NAME      Name of the certificate in PanOS configuration. Defaults to the
                       certificate Common Name.
-    -Y                Append the current year '_YYYY' to the certificate name. Also
-                      when the certificate is automatically renewed by ipa-getcert.
+    -Y                Parsed to pan_instcert to append the current year '_YYYY' to
+                      the certificate name.
 
     -p PROFILE_NAME   Apply the certificate to a (primary) SSL/TLS Service Profile.
     -s PROFILE_NAME   Apply the certificate to a (secondary) SSL/TLS Service Profile.
@@ -132,20 +131,41 @@ OPTIONS:
     -v                Verbose mode.
 ```
 
-**Note:** `-Y` is unique to pan_getcert.
+pan_instcert uses the same options:
+```
+Usage: pan_instcert [-hv] -c CERT_CN [-n CERT_NAME] [OPTIONS] FQDN
+This script uploads a certificate issued by ipa-getcert to a Palo Alto firewall
+or Panorama and optionally adds it to up to two SSL/TLS Profiles.
 
-+ **-n** _CERT_NAME_: The name you wish to give the certificate on the device (Palo Alto Networks GUI:  Device –> Certificate Management –> Certificates)
+    FQDN              Fully qualified name of the Palo Alto firewall or Panorama
+                      interface. Must be reachable from this host on port TCP/443.
+    -c CERT_CN        REQUIRED. Common Name (Subject) of the certificate, to find
+                      the certificate and key files.
+
+OPTIONS:
+    -n CERT_NAME      Name of the certificate in PanOS configuration. Defaults to the
+                      certificate Common Name.
+    -Y                Append the current year '_YYYY' to the certificate name.
+
+    -p PROFILE_NAME   Apply the certificate to a (primary) SSL/TLS Service Profile.
+    -s PROFILE_NAME   Apply the certificate to a (secondary) SSL/TLS Service Profile.
+
+    -h                Display this help and exit.
+    -v                Verbose mode.
+```
+
++ **-n** _CERT_NAME_: The name you wish to give the certificate on the device (Palo Alto Networks GUI:  Device –> Certificate Management –> Certificates). Existing names will be overwritten.
 
 
 # Automated Renewal and Installation
-ipa-getcert requests the certificate with the post-save option so that no cronjob is needed to install renewed certificates.
-The post-save will upload the renewed certificates, and take the same actions against SSL/TLS Service Profiles as when the certificate was initially installed. If the -Y option is given the certificate name will be appended with the year ("_YYYY"), otherwise the certificate will be overwritten in the Palo Alto forewall or Panorama configuration.
+ipa-getcert requests the certificate with the post-save option, thus no cronjob is needed to install renewed certificates and pan_instcert does not need to be manually called.
+
+The post-save process will upload the renewed certificates, and take the same actions against SSL/TLS Service Profiles as when the certificate was initially requested and deployed using pan_getcert. If the -Y option is given the certificate name will be appended with the year ("_YYYY"), otherwise the certificate will be overwritten in the Palo Alto firewall or Panorama configuration.
 
 Check the configured post-save command with:
 ```
 sudo ipa-getcert list [-i Request_ID | -f Path_to_cert_file]
 ```
-
 
 ### Notes
 + As best-practice, one should use separate SSL/TLS Service Profiles for Portal and Gateway. These scripts assume best-practices are followed, but will also work with single-profile configurations.
@@ -176,6 +196,23 @@ sudo ipa-getcert list [-i Request_ID | -f Path_to_cert_file]
   ```
 + Ensure `/etc/ipa/.panrc` exists, see above.
 
+# Expected CLI output
+When requesting and deploying a certificate:
+```
+user@host:~$ sudo pan_getcert -v -c gp.domain.com -Y -p GP_PORTAL_PROFILE -s GP_EXT_GW_PROFILE fw01.domain.local
+Certificate Common Name: gp.domain.com
+  verbose=1
+  CERT_CN: gp.domain.com
+  CERT_NAME: gp.domain.com_2023
+  PAN_FQDN: fw01.domain.local
+Primary SSL/TLS Profile name: GP_PORTAL_PROFILE
+Secondary SSL/TLS Profile name: GP_EXT_GW_PROFILE
+New signing request "20230427151532" added.
+Certificate requested for: gp.domain.com
+  Certificate issue took 6 seconds, waiting for the post-save process to finish.
+  Certificate install and commit by the post-save process on: fw01.domain.local took 84 seconds.
+FINISHED: Check the Palo Alto firewall or Panorama to check the commit succeeded.
+```
 
 # Crontab
 Not required; ipa-getcert certificate monitoring takes care of running post-save after renewing certificates.
@@ -189,33 +226,17 @@ pan_getcert doesn't log as it's expected to be run once (manually).
 cat /var/log/pan_instcert.log
 ```
 
-If successful, you should see something similar to the following (when using verbose):
+If successful, you should see something similar to the following in the log file:
 ```
-[2023-04-27 12:27:31+00:00]: START of pan_instcert.
-Certificate Common Name: gp.domain.local
-Parsed certificate Name: gp.domain.local_2023
-PAN_FQDN: fw01.domain.local
-Primary SSL/TLS Profile name: GP_PORTAL_PROFILE
-Secondary SSL/TLS Profile name: GP_EXT_GW_PROFILE
-API key found in: /etc/ipa/.panrc
-Certmonger certificate state MONITORING, stuck: no.
-
-  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
-                                 Dload  Upload   Total   Spent    Left  Speed
-100  3346  100   125  100  3221    154   3975 --:--:-- --:--:-- --:--:--  4130
-XML API output for crt: <response status="success"><result>Successfully imported v.gc.maizy.moe_2023 into candidate configuration</result></response>
-
-  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
-                                 Dload  Upload   Total   Spent    Left  Speed
-100  3346  100   125  100  3221    170   4391 --:--:-- --:--:-- --:--:--  4564
-XML API output for key: <response status="success"><result>Successfully imported v.gc.maizy.moe_2023 into candidate configuration</result></response>
-
-Finished uploading the certificate.
-set: success [code="20"]: "command succeeded"
-set: success [code="20"]: "command succeeded"
-gp.domain.local_2023 has been set on SSL/TLS Profile(s): GP_PORTAL_PROFILE GP_EXT_GW_PROFILE
-commit: success: "Configuration committed successfully"
-[2023-04-27 12:29:03+00:00]: END - Certificate installation done to: fw01.domain.local
+[2023-04-27 15:15:33+00:00]: START of pan_instcert.
+[2023-04-27 15:15:33+00:00]: Certificate Common Name: gp.domain.com
+[2023-04-27 15:15:34+00:00]: XML API output for crt: <response status="success"><result>Successfully imported gp.domain.com_2023 into candidate configuration</result></response>
+[2023-04-27 15:15:35+00:00]: XML API output for key: <response status="success"><result>Successfully imported gp.domain.com_2023 into candidate configuration</result></response>
+[2023-04-27 15:15:35+00:00]: Finished uploading certificate: gp.domain.com_2023
+[2023-04-27 15:15:37+00:00]: Starting commit, please be patient.
+[2023-04-27 15:17:01+00:00]: commit: success: "Configuration committed successfully"
+[2023-04-27 15:17:01+00:00]: The commit took 84 seconds to complete.
+[2023-04-27 15:17:01+00:00]: END - Finished certificate installation to: fw01.domain.local
 ```
 
 If the SSL/TLS Service Profile doesn't exist it will be created, but the following error will be shown and the commit will fail:
