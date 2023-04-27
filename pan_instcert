@@ -1,71 +1,68 @@
 #!/bin/bash
 
+## Logging
+LOG="/var/log/pan_instcert.log"
+wlog() {
+    printf "$*"
+    printf "[$(date --rfc-3339=seconds)]: $*" >> "$LOG"
+}
+trap 'wlog "ERROR - Certificate installation failed.\n"' TERM HUP
+
 ## Usage info
 show_help() {
 cat << EOF
-Usage: ${0##*/} [-hv] -n CERT_NAME [OPTIONS] FQDN
+Usage: ${0##*/} [-hv] -c CERT_CN [-n CERT_NAME] [OPTIONS] FQDN
 This script uploads a certificate issued by ipa-getcert to a Palo Alto firewall
-or Panorama.
+or Panorama and optionally adds it to up to two SSL/TLS Profiles.
 
-    FQDN                Fully qualified name of the Palo Alto firewall or Panorama
-                        interface. Must be reachable from this host on port TCP/443.
-    -n CERT_NAME        REQUIRED. Name of the certificate in PanOS configuration.
+    FQDN              Fully qualified name of the Palo Alto firewall or Panorama
+                      interface. Must be reachable from this host on port TCP/443.
+    -c CERT_CN        REQUIRED. Common Name (Subject) of the certificate, to find
+                      the certificate and key files.
 
 OPTIONS:
-    -s PROFILE_NAME     Apply the certificate to a SSL/TLS Service Profile.
-                        (For example for a management interface).
-    -p [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
-                        used on the Portal. Omit this option to avoid automatic linking.
-                        Default profile name: GP_PORTAL_PROFILE
-    -g [PROFILE_NAME]   Apply the certificate to a GlobalProtect SSL/TLS Service Profile
-                        used on the Gateway. Omit this option to avoid automatic linking.
-                        Default proifile name: GP_EXT_GW_PROFILE
+    -n CERT_NAME      Name of the certificate in PanOS configuration. Defaults to the
+                      certificate Common Name.
+    -Y                Append the current year '_YYYY' to the certificate name.
 
-    -h                  Display this help and exit.
-    -v                  Verbose mode.
+    -p PROFILE_NAME   Apply the certificate to a (primary) SSL/TLS Service Profile.
+    -s PROFILE_NAME   Apply the certificate to a (secondary) SSL/TLS Service Profile.
+
+    -h                Display this help and exit.
+    -v                Verbose mode.
 EOF
 }
 
 ## Fixed variables
 API_KEY="/etc/ipa/.panrc"
-TEMP_PWD=$(openssl rand -hex 15)
 TEMP_PFX="/tmp/getcert_pkcs12.pfx"
+TEMP_PWD=$(openssl rand -hex 15)
 VERBOSE=0
 OPTIND=1
 
 ## Read/interpret optional arguments
-while getopts n:s:pgvh opt; do
+while getopts c:n:Yp:s:vh opt; do
     case $opt in
+        c)  CERT_CN=$OPTARG
+            ;;
         n)  CERT_NAME=$OPTARG
             ;;
-        s)  SSL_TLS_PROFILE=$OPTARG
+        Y)  YEAR="_$(date +'%Y')"
             ;;
-        p)  eval nextopt=${!OPTIND}
-            if [[ -n $nextopt && $nextopt != -* ]] ; then
-                OPTIND=$((OPTIND+1))
-                if [[ "$nextopt" =~ (^[\w-]+$) ]]; then
-                    GP_PORTAL_TLS_PROFILE=$nextopt
-                else
-                    printf 'ERROR: Invalid GP_PORTAL_TLS_PROFILE given: <%s>\n' "$nextopt"
-                    printf 'Ensure the name does not contain dots or spaces.\n'
-                    exit 2
-                fi
+        p)  if grep -q -P '(^[\w-]+$)' <<< "$OPTARG"; then
+                SSL_TLS_PROFILE_1=$OPTARG
             else
-                GP_PORTAL_TLS_PROFILE=GP_PORTAL_PROFILE
+                printf 'ERROR: Invalid first SSL/TLS Profile name given: %s\n' "$OPTARG"
+                printf 'Ensure the name does not contain dots or spaces.\n'
+                exit 2
             fi
             ;;
-        p)  eval nextopt=${!OPTIND}
-            if [[ -n $nextopt && $nextopt != -* ]] ; then
-                OPTIND=$((OPTIND+1))
-                if [[ "$nextopt" =~ (^[\w-]+$) ]]; then
-                    GP_GW_TLS_PROFILE=$nextopt
-                else
-                    printf 'ERROR: Invalid GP_GW_TLS_PROFILE given: <%s>\n' "$nextopt"
-                    printf 'Ensure the name does not contain dots or spaces.\n'
-                    exit 3
-                fi
+        s)  if grep -q -P '(^[\w-]+$)' <<< "$OPTARG"; then
+                SSL_TLS_PROFILE_2=$OPTARG
             else
-                GP_GW_TLS_PROFILE=GP_EXT_GW_PROFILE
+                printf 'ERROR: Invalid second SSL/TLS Profile name given: %s\n' "$OPTARG"
+                printf 'Ensure the name does not contain dots or spaces.\n'
+                exit 2
             fi
             ;;
         v)  VERBOSE=$((VERBOSE+1))
@@ -80,93 +77,143 @@ while getopts n:s:pgvh opt; do
 done
 shift "$((OPTIND-1))"   # Discard the options and sentinel --
 
-# Check that a certificate name was given
-if [[ -z $CERT_NAME ]]; then
-    printf 'ERROR: missing -n, a certificate name is required.\n\n'
-    show-help >&2
-    exit 1
+## This script must be run as root
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run as root"
+    exit
 fi
 
-# Check that a single valid FQDN was parsed.
-if [[ "$@" =~ (?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}$) ]]; then
+## Start logging
+wlog "START of pan_instcert.\n"
+
+# Check that a Common Name name was given
+if [[ -z $CERT_CN ]]; then
+    wlog "ERROR: Missing -c, a certificate requires a Common Name.\n\n"
+    show_help >&2
+    exit 1
+elif grep -q -P '(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63}$)' <<< "$CERT_CN"; then
+    CERT_CN=${CERT_CN,,}
+    wlog "Certificate Common Name: $CERT_CN\n"
+fi
+if [[ -z $CERT_NAME ]]; then
+    CERT_NAME=$CERT_CN
+fi
+# Append the current year to CERT_NAME if requested [-Y]
+CERT_NAME="$CERT_NAME$YEAR"
+
+(( $VERBOSE > 0 )) && wlog "Parsed certificate Name: $CERT_NAME\n"
+
+# Check that a single valid FQDN was parsed for the Palo Alto API interface
+if grep -q -P '(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$)' <<< "$@"; then
     PAN_MGMT="${@,,}"
-    printf 'verbose=<%d>\nCERT_NAME=<%s>\nFQDN=<%s>\n' "$VERBOSE" "$CERT_NAME" "$PAN_MGMT"
-    (( $VERBOSE > 0 )) && printf 'GP_PORTAL_TLS_PROFILE=<%s>\nGP_GW_TLS_PROFILE=<%s>\n' "$GP_PORTAL_TLS_PROFILE" "$GP_GW_TLS_PROFILE"
+    (( $VERBOSE > 0 )) && wlog "PAN_FQDN: $PAN_MGMT\n"
     if ! nc -z $PAN_MGMT 443 2>/dev/null; then
-        printf 'ERROR: Palo Alto device unreachable on TCP/443 at: <%s>' "$PAN_MGMT"
+        wlog "ERROR: Palo Alto device unreachable at: https://$PAN_MGMT/\n"
         exit 4
     fi
 else
-    printf 'ERROR: A valid FQDN is required to issue a certificate.\n'
-    printf 'Parsed string: <%s>\n\n' "$@"
+    wlog "ERROR: A valid FQDN is required to issue a certificate.\n"
+    wlog "Parsed string: $@\n\n"
     show_help >&2
     exit 4
+fi
+
+# Verbosely log SSL/TLS profile names, only allow secondary if a primary is given
+if [[ ! -z $SSL_TLS_PROFILE_1 ]]; then
+    (( $VERBOSE > 0 )) && wlog "Primary SSL/TLS Profile name: $SSL_TLS_PROFILE_1\n"
+    if [[ ! -z $SSL_TLS_PROFILE_2 ]]; then
+        (( $VERBOSE > 0 )) && wlog "Secondary SSL/TLS Profile name: $SSL_TLS_PROFILE_2\n"
+    fi
+else
+    SSL_TLS_PROFILE_2=""
+    (( $VERBOSE > 0 )) && wlog "No SSL/TLS Profile names parsed.\n"
 fi
 
 ## Requirements
 # Installed packages: openssl, pan-python
 
-# Ensure the host is enrolled into an IPA server and the folder for certificate chain storage exists.
-REALM=$(realm discover -n)
-if [ $? -eq 0 ]; then
-    echo 'ERROR: Realm not found. This script must be run from an enrolled FreeIPA client.'
+# Verify the API key exists
+if ! grep -q -P '^api_key=' "$API_KEY"; then
+    wlog "ERROR: File missing or no API key found in: $API_KEY\n"
     exit 5
-fi
-if [ -d /etc/ipa ]; then
-    sudo mkdir -m 0700 -p /etc/ipa/ssl
-    if [ $? -eq 0 ]; then
-        printf 'ERROR: /etc/ipa/ssl could not be created.\n'
-        printf 'Ensure you have sudo rights to create this folder, or have it created for you\nowned by root and with privileges set to: 0700.\n'
-    exit 6
 else
-    echo 'ERROR: /etc/ipa/ does not exist. This script must be run from an enrolled FreeIPA client.'
-    exit 5
+    (( $VERBOSE > 0 )) && wlog "API key found in: $API_KEY\n"
+    # Commit the cardinal sin of changing the type of the variable from file-path to string.
+    API_KEY=$(grep -P '^api_key=' "$API_KEY")
+    API_KEY="${API_KEY#api_key=}"
 fi
 
 ## Upload and install the certificate to Palo Alto firewall or Panorama.
-# Verify state of the certificate is MONITORING
-if ! [[ $(sudo ipa-getcert status -f /etc/ssl/certs/${CERT_NAME}.crt) =~ "MONITORING" ]]; then
-    printf 'ERROR: Problem encountered with the requested certificate.\nInstallation aborted.\n'
-    exit 10
+# Verify state of the certificate is MONITORING or POST_SAVED_CERT
+KEY_FILE="/etc/ssl/private/${CERT_CN}.key"
+CRT_FILE="/etc/ssl/certs/${CERT_CN}.crt"
+CERT_STATUS=$(ipa-getcert status -f "$CRT_FILE" -v)
 # Verify both certificate and key files exist
-elif [[ ! -f '/etc/ssl/private/${PAN_MGMT}.key' ]] || [[ ! -f '/etc/ssl/certs/${PAN_MGMT}.crt' ]]; then
-    printf 'ERROR: Missing certificate or key files. Check if the following files exist:\n'
-    printf 'Key file:<%s>\nCert file:<%s>\n' "/etc/ssl/private/${PAN_MGMT}.key" "/etc/ssl/certs/${PAN_MGMT}.crt"
+if [[ ! -f "$KEY_FILE" ]] || [[ ! -f "$CRT_FILE" ]]; then
+    wlog "ERROR: Missing certificate or key files. Check if the following files exist:\n"
+    wlog "Key file: $KEY_FILE\nCert file: $CRT_FILE\n"
+    exit 10
+elif ! [[ "$CERT_STATUS" =~ (MONITORING|POST_SAVED_CERT) ]]; then
+    wlog 'ERROR: Problem encountered with the requested certificate.\nInstallation aborted, verify that the certificate status is "MONITORING".\n'
     exit 11
+else
+    (( $VERBOSE > 0 )) && wlog "Certmonger certificate ${CERT_STATUS,}\n"
 fi
+printf '\n'
 
-# Create a password protected PKCS12 file
-sudo openssl pkcs12 -export -out '$TEMP_PFX' -inkey '/etc/ssl/private/${PAN_MGMT}.key' -in '/etc/ssl/certs/${PAN_MGMT}.crt' \
-    -certfile '/etc/ipa/ssl/${PAM_MGMT}_chain.pem' -passout pass:$TEMP_PWD
+# Create a password protected PKCS12 file. If you need an intermediary certificate Manually load it on the Palo Alto firewall or Panorama.
+openssl pkcs12 -export -out "$TEMP_PFX" -inkey "$KEY_FILE" -in "$CRT_FILE" -passout pass:$TEMP_PWD
 
 # Upload it to the firewall
-curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " "
-curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " "
-sudo rm '$TEMP_PFX'
-if (( $VERBOSE > 0 )); then
-    printf '<%s> has been set deployed to: <%s>' "$CERT_NAME" "$PAN_MGMT"
+OUTPUT=$(curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
+CRT_STATUS=$?
+wlog "XML API output for crt: $OUTPUT\n"
+if [ $CRT_STATUS -eq 0 ]; then
+    OUTPUT=$(curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
+    KEY_STATUS=$?
+    wlog "XML API output for key: $OUTPUT\n"
+    if [ $KEY_STATUS -eq 0 ]; then
+        wlog "Finished uploading certificate: $CERT_NAME\n"
+    elif [ $KEY_STATUS -ne 0 ]; then
+        wlog "ERROR: Upload of key failed.\n"
+        exit 12
+    fi
+else
+    wlog "ERROR: Upload of certificate failed.\n"
+    exit 12
 fi
+rm "$TEMP_PFX"
 
 # Install/update the certificate to given SSL/TLS Profile(s)
-if [[ ! -z $SSL_TLS_PROFILE ]]; then
-    panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$SSL_TLS_PROFILE']"
-    PROFILES=$SSL_TLS_PROFILE
-else
-    if [[ ! -z $GP_PORTAL_TLS_PROFILE ]]; then
-        panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_PORTAL_TLS_PROFILE']"
-        PROFILES=$GP_PORTAL_TLS_PROFILE
+if [[ ! -z $SSL_TLS_PROFILE_1 ]]; then
+    RESULT=$(/usr/local/bin/panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$SSL_TLS_PROFILE_1']" 2>&1)
+    (( $VERBOSE > 0 )) && wlog "$RESULT\n"
+    if [[ "$RESULT" =~ (command succeeded) ]]; then
+        PROFILES=$SSL_TLS_PROFILE_1
+	wlog "Successfully updated SSL/TLS Profile $SSL_TLS_PROFILE_1\n"
+    else
+        wlog "ERROR: Update of SSL/TLS Profile $SSL_TLS_PROFILE_1 failed.\n"
     fi
-    if [[ ! -z $GP_GW_TLS_PROFILE ]]; then
-        panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$GP_GW_TLS_PROFILE']"
-        PROFILES="$PROFILES $GP_GW_TLS_PROFILE"
+    if [[ ! -z $SSL_TLS_PROFILE_2 ]]; then
+        RESULT=$(/usr/local/bin/panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$SSL_TLS_PROFILE_2']" 2>&1)
+        (( $VERBOSE > 0 )) && wlog "$RESULT\n"
+	if [[ "$RESULT" =~ (command succeeded) ]]; then
+       	    PROFILES="$PROFILES $SSL_TLS_PROFILE_2"
+	    wlog "Successfully updated SSL/TLS Profile $SSL_TLS_PROFILE_2\n"
+        else
+            wlog "ERROR: Update of SSL/TLS Profile $SSL_TLS_PROFILE_2 failed.\n"
+	fi
     fi
 fi
 if (( $VERBOSE > 0 )) && [[ ! -z $PROFILES ]]; then
-    printf '<%s> has been set on SSL/TLS profile: <%s>' "$CERT_NAME" "$PROFILES"
+    wlog "$CERT_NAME has been set on SSL/TLS Profile(s): $PROFILES\n"
 fi
 
 ## Save/commit the changes
-panxapi.py -h $PAN_MGMT -K $API_KEY -C '' --sync
-if (( $VERBOSE > 0 )); then
-    printf 'The configuration on <%s> has been saved/synced.' "$PAN_MGMT"
-fi
+wlog "Starting commit, please be patient.\n"
+SECONDS=0
+RESULT=$(/usr/local/bin/panxapi.py -h $PAN_MGMT -K $API_KEY -C '' --sync 2>&1)
+wlog "$RESULT\n"
+wlog "The commit took $SECONDS seconds to complete.\n"
+wlog "END - Finished certificate installation to: $PAN_MGMT\n"
+
