@@ -70,8 +70,8 @@ done
 shift "$((OPTIND-1))"   # Discard the options and sentinel --
 
 ## This script must be run as root
-if [ "$EUID" -ne 0 ]
-    then echo "Please run as root"
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run as root"
     exit
 fi
 
