@@ -91,8 +91,8 @@ There are two scripts:
 ### pan_getcert performs the following actions:
 1. Uses the privileges set in FreeIPA (managed by) to call ipa-getcert and request a certificate from FreeIPA.
 2. ipa-getcert will automatically renew a certificate when it's due, as long as the FQDN DNS record resolves, and the host and Service Principal still exist in FreeIPA.
-3. Calls pan_instcert for certificate installation.
-4. Sets the post-save command to pan_instcert with the same parameters as issued to pan_getcert, for automated installation of renewed certificates.
+3. Sets the post-save command to pan_instcert with the same parameters as issued to pan_getcert, for automated installation of renewed certificates.
+  + Post-save will run on the first certificate save, using pan_instcert for certificate installation.
 
 ### pan_instcert performs the following actions:
 1. Randomly generates a certificate passphrase using “openssl rand”.
