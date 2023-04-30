@@ -96,15 +96,15 @@ There are two scripts:
 
 ### pan_instcert performs the following actions:
 1. Randomly generates a certificate passphrase using “openssl rand”.
-2. Creates a temporary, password-protected PKCS12 cert file named “getcert_pkcs12.pfx” from the individual private and public keys issued by ipa-getcert, and places this file in /etc/opa/ssl. This folder is created if it doesn't exist.
+2. Creates a temporary, password-protected PKCS12 cert file `/tmp/getcert_pkcs12.pfx` from the individual private and public keys issued by ipa-getcert.
 3. Uploads the temporary PKCS12 file to the firewall using the randomly-generated passphrase.
   + (Optionally) adds a year (in 4-digit notation) to the certificate name.
-4. Deletes the temporary PKCS12 certificate from the linux host.
+4. Deletes the temporary PKCS12 certificate from the Linux host.
 5. (Optionally) applies the certificate to up to two SSL/TLS Profiles.
   + Single SSL/TLS Profile: For example for the Management UI SSL/TLS profile.
-  + Two SSL/TLS Prtofiles: For example for GlobalProtect Portal and GlobalProtect Gateway SSL/TLS Profiles.
+  + Two SSL/TLS Profiles: For example for GlobalProtect Portal and GlobalProtect Gateway SSL/TLS Profiles.
 6. Commits the candidate configuration (synchronously) and reports for the commit result.
-7. Logs all output to /var/log/pan_instcert.log
+7. Logs all output to `/var/log/pan_instcert.log`.
 
 ### Script options
 pan_getcert uses the following options:
