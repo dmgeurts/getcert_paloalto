@@ -103,7 +103,7 @@ There are two scripts:
 5. (Optionally) applies the certificate to up to two SSL/TLS Profiles.
     + Single SSL/TLS Profile: For example for the Management UI SSL/TLS profile.
     + Two SSL/TLS Profiles: For example for GlobalProtect Portal and GlobalProtect Gateway SSL/TLS Profiles.
-6. Commits the candidate configuration (synchronously) and reports for the commit result.
+6. Commits the candidate configuration (synchronously) and reports the commit result.
 7. Logs all output to `/var/log/pan_instcert.log`.
 
 ### Script options
