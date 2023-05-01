@@ -149,23 +149,25 @@ if [[ ! -z $TYPE ]]; then
     fi
 fi
 
+# Parse IPA CA Certificate Profile to ipa-getcert
+if [[ -z $CERT_PROFILE ]]; then
+    IPA_OPTS=""
+else
+    IPA_OPTS="-T $CERT_PROFILE"
+fi
+# Parse certificate key type and length to ipa-getcert
+if [[ ! -z $TYPE ]]; then
+    IPA_OPTS="$IPA_OPTS -G $TYPE"
+    if [[ ! -z $BITS ]]; then
+         IPA_OPTS="$IPA_OPTS -G $BITS"
+    fi
+fi
+
 # Parse YEAR option to pan_instcert
 if [[ -z $YEAR ]]; then
     INST_OPTS=""
 else
     INST_OPTS="-Y"
-fi
-
-# Parse IPA CA Certificate Profile to pan_instcert
-if [[ ! -z $CERT_PROFILE ]]; then
-    INST_OPTS="$INST_OPTS -T $CERT_PROFILE"
-fi
-# Parse certificate key type and length to pan_instcert
-if [[ ! -z $TYPE ]]; then
-    INST_OPTS="$INST_OPTS -G $TYPE"
-    if [[ ! -z $BITS ]]; then
-         INST_OPTS="$INST_OPTS -G $BITS"
-    fi
 fi
 
 # Verbosely log SSL/TLS profile names (if any) and only allow secondary if a primary is given
@@ -191,7 +193,7 @@ if [[ ! -d /etc/ipa ]]; then
 fi
 
 ## Request the certificate from FreeIPA
-ipa-getcert request -N $CERT_CN -K HTTP/$CERT_CN -k /etc/ssl/private/${CERT_CN}.key -f /etc/ssl/certs/${CERT_CN}.crt -D $CERT_CN -C "$INST_CERT -c $CERT_CN -n $CERT_NAME $INST_OPTS $PAN_MGMT"
+ipa-getcert request $IPA_OPTS -N $CERT_CN -K HTTP/$CERT_CN -k /etc/ssl/private/${CERT_CN}.key -f /etc/ssl/certs/${CERT_CN}.crt -D $CERT_CN -C "$INST_CERT -c $CERT_CN -n $CERT_NAME $INST_OPTS $PAN_MGMT"
 if (( $VERBOSE > 0 )); then
     printf 'Certificate requested for: %s\n' "$CERT_CN"
 fi
