@@ -17,6 +17,7 @@ OPTIONS:
                       certificate Common Name.
     -Y                Parsed to pan_instcert to append the current year '_YYYY' to
                       the certificate name.
+    -S SERVICE        Service of the Service Principal. Default: HTTP.
     -T CERT_PROFILE   Ask IPA to process the request using the named profile or
                       template.
     -G TYPE           Type of key to be generated if one is not already in place.
@@ -40,13 +41,15 @@ VERBOSE=0
 OPTIND=1
 
 ## Read/interpret optional arguments
-while getopts c:n:YT:G:B:p:s:vh opt; do
+while getopts c:n:YS:T:G:B:p:s:vh opt; do
     case $opt in
         c)  CERT_CN=$OPTARG
             ;;
         n)  CERT_NAME=$OPTARG
             ;;
         Y)  YEAR="_$(date +'%Y')"
+            ;;
+        S)  SERVICE=$OPTARG
             ;;
         T)  CERT_PROFILE=$OPTARG
             ;;
@@ -118,6 +121,11 @@ else
     printf 'Parsed string: %s\n\n' "$@"
     show_help >&2
     exit 4
+fi
+
+# Set the default service for the Service Principal
+if [[ -z $SERVICE ]]; then
+    $SERVICE="HTTP"
 fi
 
 # Verify a valid IPA CA Certificate Profile is parsed
@@ -193,7 +201,7 @@ if [[ ! -d /etc/ipa ]]; then
 fi
 
 ## Request the certificate from FreeIPA
-ipa-getcert request $IPA_OPTS -N $CERT_CN -K HTTP/$CERT_CN -k /etc/ssl/private/${CERT_CN}.key -f /etc/ssl/certs/${CERT_CN}.crt -D $CERT_CN -C "$INST_CERT -c $CERT_CN -n $CERT_NAME $INST_OPTS $PAN_MGMT"
+ipa-getcert request $IPA_OPTS -N $CERT_CN -K $SERVICE/$CERT_CN -k /etc/ssl/private/${CERT_CN}.key -f /etc/ssl/certs/${CERT_CN}.crt -D $CERT_CN -C "$INST_CERT -c $CERT_CN -n $CERT_NAME $INST_OPTS $PAN_MGMT"
 if (( $VERBOSE > 0 )); then
     printf 'Certificate requested for: %s\n' "$CERT_CN"
 fi
