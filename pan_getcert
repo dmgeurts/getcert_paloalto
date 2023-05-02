@@ -22,9 +22,9 @@ OPTIONS:
                       template.
     -G TYPE           Type of key to be generated if one is not already in place.
                       IPA CS uses RSA by default. (RSA, DSA, EC or ECDSA)
-    -B BITS           In case a new key pair needs to be generated, this option
-                      specifies the size of the key. Default: 2048 (RSA).
-                      ECDSA: 256, 384 or 512. See certmonger.conf for the default.
+    -b BITS           In case a new key pair needs to be generated, this option
+                      specifies the size of the key. Default: 2048 (RSA/DSA).
+                      EC: 256, 384 or 512. See certmonger.conf for the default.
 
     -p PROFILE_NAME   Apply the certificate to a (primary) SSL/TLS Service Profile.
     -s PROFILE_NAME   Apply the certificate to a (secondary) SSL/TLS Service Profile.
@@ -41,7 +41,7 @@ VERBOSE=0
 OPTIND=1
 
 ## Read/interpret optional arguments
-while getopts c:n:YS:T:G:B:p:s:vh opt; do
+while getopts c:n:YS:T:G:b:p:s:vh opt; do
     case $opt in
         c)  CERT_CN=$OPTARG
             ;;
@@ -55,7 +55,7 @@ while getopts c:n:YS:T:G:B:p:s:vh opt; do
             ;;
         G)  TYPE=$OPTARG
             ;; 
-        B)  BITS=$OPTARG
+        b)  BITS=$OPTARG
             ;;
         p)  if grep -q -P '(^[\w-]+$)' <<< "$OPTARG"; then
                 SSL_TLS_PROFILE_1=$OPTARG
@@ -85,10 +85,10 @@ while getopts c:n:YS:T:G:B:p:s:vh opt; do
 done
 shift "$((OPTIND-1))"   # Discard the options and sentinel --
 
-## This script must be run as root
-if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root"
-    exit
+## The user must have sudo rights for ipa-getcert
+if ! sudo ipa-getcert -h; then
+    echo "Please ensure you have sudo privileges for ipa-getcert"
+    exit 1
 fi
 
 # Check that a Common Name name was given
@@ -105,7 +105,7 @@ fi
 if [[ -z $CERT_NAME ]]; then
     CERT_NAME=$CERT_CN
 elif (( $VERBOSE > 0 )); then
-    printf 'Parsed certificate Name: %s' "$CERT_NAME"
+    printf 'Parsed certificate Name: %s\n' "$CERT_NAME"
 fi
 
 # Check that a single valid FQDN was parsed for the Palo Alto API interface
@@ -129,30 +129,34 @@ if [[ -z $SERVICE ]]; then
 fi
 
 # Verify a valid IPA CA Certificate Profile is parsed
-if [[ ! -z $CERT_PROFILE ]] && ipa certprofile-find --id=$CERT_PROFILE; then
-    printf "ERROR: Certificate profile %s doesn't exist" "$CERT_PROFILE"
-    exit 6
+if [[ ! -z $CERT_PROFILE ]]; then
+    if ! (ipa certprofile-find --id="$CERT_PROFILE"); then
+        printf "ERROR: Certificate profile %s doesn't exist\n" "$CERT_PROFILE"
+        exit 6
+    else
+        (( $VERBOSE > 0 )) && printf 'Found certificate profile: %s\n' "$CERT_PROFILE"
+    fi
 fi
 
 # Verify the parsed certificate type and bit length
 if [[ ! -z $TYPE ]]; then
-    $TYPE=${TYPE^^}
+    TYPE=${TYPE^^}
     if [[ "$TYPE" =~ ^(RSA|DSA)$ ]]; then
         if [ "$BITS" -lt 2048 ]; then
-            printf 'ERROR: RSA/DSA key length must be at least 2048 bits'
+            printf 'ERROR: RSA/DSA key length must be at least 2048 bits\n'
             exit 6
         else
             (( $VERBOSE > 0 )) && printf 'Key type/length: %s/%d' "$TYPE" "$BITS"
         fi
     elif [[ "$TYPE" =~ ^(EC|ECDSA)$ ]]; then
         if [ "$BITS" -lt 256 ]; then
-            printf 'ERROR: EC/ECDSA key longth must be at least 256 bits'
+            printf 'ERROR: EC/ECDSA key longth must be at least 256 bits\n'
             exit 6
         else
-            (( $VERBOSE > 0 )) && printf 'Key type/length: %s/%d' "$TYPE" "$BITS"
+            (( $VERBOSE > 0 )) && printf 'Key type/length: %s/%d\n' "$TYPE" "$BITS"
         fi
     else
-        printf 'ERROR: Unsupported key type: %s' "$TYPE"
+        printf 'ERROR: Unsupported key type: %s\n' "$TYPE"
         exit 6
     fi
 fi
@@ -167,7 +171,7 @@ fi
 if [[ ! -z $TYPE ]]; then
     IPA_OPTS="$IPA_OPTS -G $TYPE"
     if [[ ! -z $BITS ]]; then
-         IPA_OPTS="$IPA_OPTS -G $BITS"
+         IPA_OPTS="$IPA_OPTS -g $BITS"
     fi
 fi
 
@@ -201,7 +205,7 @@ if [[ ! -d /etc/ipa ]]; then
 fi
 
 ## Request the certificate from FreeIPA
-ipa-getcert request $IPA_OPTS -N $CERT_CN -K $SERVICE/$CERT_CN -k /etc/ssl/private/${CERT_CN}.key -f /etc/ssl/certs/${CERT_CN}.crt -D $CERT_CN -C "$INST_CERT -c $CERT_CN -n $CERT_NAME $INST_OPTS $PAN_MGMT"
+sudo ipa-getcert request $IPA_OPTS -N $CERT_CN -K $SERVICE/$CERT_CN -k /etc/ssl/private/${CERT_CN}.key -f /etc/ssl/certs/${CERT_CN}.crt -D $CERT_CN -C "$INST_CERT -c $CERT_CN -n $CERT_NAME $INST_OPTS $PAN_MGMT"
 if (( $VERBOSE > 0 )); then
     printf 'Certificate requested for: %s\n' "$CERT_CN"
 fi
@@ -213,11 +217,11 @@ CERT_STAT="requested"
 while [[ $SECONDS -lt 300 ]] && [[ "$CERT_STAT" != "monitoring" ]]; do
     sleep $STEP
     (( $VERBOSE > 0 )) && printf '\r  Waiting for status: %d seconds.' "$SECONDS"
-    if [[ $(ipa-getcert status -f /etc/ssl/certs/${CERT_CN}.crt -v) =~ (POST_SAVED_CERT) ]] && [[ "$CERT_STAT" == "requested" ]]; then
+    if [[ $(sud ipa-getcert status -f /etc/ssl/certs/${CERT_CN}.crt -v) =~ (POST_SAVED_CERT) ]] && [[ "$CERT_STAT" == "requested" ]]; then
         C_ISSUE=$SECONDS
         printf '\r  Certificate issue took %d seconds, waiting for the post-save process to finish.\n' "$C_ISSUE"
         CERT_STAT="post_saved_cert"
-    elif [[ $(ipa-getcert status -f /etc/ssl/certs/${CERT_CN}.crt -v) =~ (MONITORING) ]]; then
+    elif [[ $(sudo ipa-getcert status -f /etc/ssl/certs/${CERT_CN}.crt -v) =~ (MONITORING) ]]; then
         printf '\r  Certificate install and commit by the post-save process on: %s took %d seconds.\n' "$PAN_MGMT" "$(($SECONDS-$C_ISSUE))"
         CERT_STAT="monitoring"
     fi
