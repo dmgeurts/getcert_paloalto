@@ -86,7 +86,7 @@ done
 shift "$((OPTIND-1))"   # Discard the options and sentinel --
 
 ## The user must have sudo rights for ipa-getcert
-if ! sudo ipa-getcert -h; then
+if ! sudo ipa-getcert -h &> /dev/null; then
     echo "Please ensure you have sudo privileges for ipa-getcert"
     exit 1
 fi
