@@ -107,6 +107,8 @@ There are two scripts:
 7. Logs all output to `/var/log/pan_instcert.log`.
 
 ### Script options
+Run pan_getcert without sudo, doing so may block access to your keytab and then ipa-getcert can't authenticate to IPA. It will test for and run ipa-getcert with sudo privileges.
+
 pan_getcert uses the following options:
 ```
 Usage: pan_getcert [-hv] -c CERT_CN [-n CERT_NAME] [-Y] [OPTIONS] FQDN
@@ -123,6 +125,14 @@ OPTIONS:
                       certificate Common Name.
     -Y                Parsed to pan_instcert to append the current year '_YYYY' to
                       the certificate name.
+    -S SERVICE        Service of the Service Principal. Default: HTTP.
+    -T CERT_PROFILE   Ask IPA to process the request using the named profile or
+                      template.
+    -G TYPE           Type of key to be generated if one is not already in place.
+                      IPA CS uses RSA by default. (RSA, DSA, EC or ECDSA)
+    -b BITS           In case a new key pair needs to be generated, this option
+                      specifies the size of the key. Default: 2048 (RSA/DSA).
+                      EC: 256, 384 or 512. See certmonger.conf for the default.
 
     -p PROFILE_NAME   Apply the certificate to a (primary) SSL/TLS Service Profile.
     -s PROFILE_NAME   Apply the certificate to a (secondary) SSL/TLS Service Profile.
@@ -131,7 +141,13 @@ OPTIONS:
     -v                Verbose mode.
 ```
 
-pan_instcert uses the same options:
+FreeIPA specific options [-S] SERVICE, [-T] CERT_PROFILE and [-G] TYPE, were added to assist in requesting certificates for Services other than HTTP, for example LDAP, host etc. For example, I use a host certificate as a Subordinate certificate. To do so I also needed to add the option to specify an alternative Certificate Profile. See [FreeIPA Subordinate Certificates](https://frasertweedale.github.io/blog-redhat/posts/2018-08-21-ipa-subordinate-ca.html) for more information about that. Finally, I explored the option of using ECDSA, only to find FreeIPA still doesn't support it. But rather than stripping this code out, I left it in place for future use.
+
+**Note:** FreeIPA only supports RSA keys. Hence the -G option is in preparation of future support of other keys. [More info](https://www.reddit.com/r/FreeIPA/comments/134puyw/freeipa_ca_pki_ecdsa_support/).
+
+Run pan_instcert with sudo, it will test if it's run with uid 0 (root). Ensure this command is added to sudo rules if it must be used manually.
+
+pan_instcert uses the same options, minus the FreeIPA specifics:
 ```
 Usage: pan_instcert [-hv] -c CERT_CN [-n CERT_NAME] [OPTIONS] FQDN
 This script uploads a certificate issued by ipa-getcert to a Palo Alto firewall
