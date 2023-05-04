@@ -1,7 +1,7 @@
 # getcert_paloalto
 Automate FreeIPA certificate deployments and renewals for Palo Alto Networks Firewalls.
 
-For a detailed guide, please refer to the following: TBD
+See also: https://djerk.nl/2023/automating-freeipa-certificates-on-palo-alto-devices
 
 CREDIT - The basis for this repository was taken from: https://github.com/psiri/letsencrypt_paloalto
 
