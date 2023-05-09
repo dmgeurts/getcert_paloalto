@@ -216,7 +216,7 @@ CERT_STAT="requested"
 while [[ $SECONDS -lt 300 ]] && [[ "$CERT_STAT" != "monitoring" ]]; do
     sleep $STEP
     (( $VERBOSE > 0 )) && printf '\r  Waiting for status: %d seconds.' "$SECONDS"
-    if [[ $(sud ipa-getcert status -f /etc/ssl/certs/${CERT_CN}.crt -v) =~ (POST_SAVED_CERT) ]] && [[ "$CERT_STAT" == "requested" ]]; then
+    if [[ $(sudo ipa-getcert status -f /etc/ssl/certs/${CERT_CN}.crt -v) =~ (POST_SAVED_CERT) ]] && [[ "$CERT_STAT" == "requested" ]]; then
         C_ISSUE=$SECONDS
         printf '\r  Certificate issue took %d seconds, waiting for the post-save process to finish.\n' "$C_ISSUE"
         CERT_STAT="post_saved_cert"
