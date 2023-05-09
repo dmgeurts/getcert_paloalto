@@ -36,7 +36,6 @@ EOF
 
 ## Fixed variables
 INST_CERT="/usr/local/bin/pan_instcert"
-TEMP_PWD=$(openssl rand -hex 15)
 VERBOSE=0
 OPTIND=1
 
