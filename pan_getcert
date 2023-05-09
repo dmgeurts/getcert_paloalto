@@ -21,7 +21,7 @@ OPTIONS:
     -T CERT_PROFILE   Ask IPA to process the request using the named profile or
                       template.
     -G TYPE           Type of key to be generated if one is not already in place.
-                      IPA CS uses RSA by default. (RSA, DSA, EC or ECDSA)
+                      IPA CA uses RSA by default. (RSA, DSA, EC or ECDSA)
     -b BITS           In case a new key pair needs to be generated, this option
                       specifies the size of the key. Default: 2048 (RSA/DSA).
                       EC: 256, 384 or 512. See certmonger.conf for the default.
