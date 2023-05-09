@@ -125,7 +125,7 @@ fi
 
 # Set the default service for the Service Principal
 if [[ -z $SERVICE ]]; then
-    $SERVICE="HTTP"
+    SERVICE="HTTP"
 fi
 
 # Verify a valid IPA CA Certificate Profile is parsed
