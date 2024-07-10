@@ -138,7 +138,7 @@ if [[ "$API_KEY" != "/etc/ipa/.panrc" ]]; then
     if [ -f "$API_KEY" ]; then
         printf 'Parsed API key file exists: %s\n' "$API_KEY"
     else
-        printf 'ERROR: Parsed API key file doesn't exist: %s\n' "$API_KEY"
+        printf "ERROR: Parsed API key file doesn't exist: %s\n" "$API_KEY"
         show_help >&2
         exit 1
     fi
