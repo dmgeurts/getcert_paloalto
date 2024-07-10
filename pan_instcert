@@ -24,9 +24,11 @@ OPTIONS:
     -n CERT_NAME      Name of the certificate in PanOS configuration. Defaults to the
                       certificate Common Name.
     -Y                Append the current year '_YYYY' to the certificate name.
+    -k key(path|ext)  API key file location or extension.
 
     -p PROFILE_NAME   Apply the certificate to a (primary) SSL/TLS Service Profile.
     -s PROFILE_NAME   Apply the certificate to a (secondary) SSL/TLS Service Profile.
+
 
     -h                Display this help and exit.
     -v                Verbose mode.
@@ -41,13 +43,15 @@ VERBOSE=0
 OPTIND=1
 
 ## Read/interpret optional arguments
-while getopts c:n:Yp:s:vh opt; do
+while getopts c:n:Yp:s:k:vh opt; do
     case $opt in
         c)  CERT_CN=$OPTARG
             ;;
         n)  CERT_NAME=$OPTARG
             ;;
         Y)  YEAR="_$(date +'%Y')"
+            ;;
+        k)  API_KEY=$OPTARG
             ;;
         p)  if grep -q -P '(^[\w-]+$)' <<< "$OPTARG"; then
                 SSL_TLS_PROFILE_1=$OPTARG
@@ -100,6 +104,24 @@ if [[ -z $CERT_NAME ]]; then
 fi
 # Append the current year to CERT_NAME if requested [-Y]
 CERT_NAME="$CERT_NAME$YEAR"
+
+# Check if an alternate API key file path or extension was given
+if [[ "$API_KEY" != "/etc/ipa/.panrc" ]]; then
+    if [ -d "API_KEY" ]; then
+        # Parsed string is a directory
+        API_KEY="${API_KEY}/.panrc"
+    elif [[ "$API_KEY" != *\/* ]]; then
+        # Parsed string is a file extension
+        API_KEY="/etc/ipa/.panrc.$API_KEY"
+    fi
+    if [ -f "$API_KEY" ]; then
+        wlog "Parsed API key file exists: $API_KEY\n"
+    else
+        wlog "Parsed API key file doesn't exist: $API_KEY\n"
+        show_help >&2
+        exit 1
+    fi
+fi
 
 (( $VERBOSE > 0 )) && wlog "Parsed certificate Name: $CERT_NAME\n"
 
