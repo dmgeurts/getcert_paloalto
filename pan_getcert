@@ -17,6 +17,7 @@ OPTIONS:
                       certificate Common Name.
     -Y                Parsed to pan_instcert to append the current year '_YYYY' to
                       the certificate name.
+    -k key(path|ext)  API key file location or extension.
     -S SERVICE        Service of the Service Principal. Default: HTTP.
     -T CERT_PROFILE   Ask IPA to process the request using the named profile or
                       template.
@@ -35,18 +36,21 @@ EOF
 }
 
 ## Fixed variables
+API_KEY="/etc/ipa/.panrc"
 INST_CERT="/usr/local/bin/pan_instcert"
 VERBOSE=0
 OPTIND=1
 
 ## Read/interpret optional arguments
-while getopts c:n:YS:T:G:b:p:s:vh opt; do
+while getopts c:n:YS:T:G:b:p:s:k:vh opt; do
     case $opt in
         c)  CERT_CN=$OPTARG
             ;;
         n)  CERT_NAME=$OPTARG
             ;;
         Y)  YEAR="_$(date +'%Y')"
+            ;;
+        k)  API_KEY=$OPTARG
             ;;
         S)  SERVICE=$OPTARG
             ;;
@@ -122,6 +126,24 @@ else
     exit 4
 fi
 
+# Check if an alternate API key file path or extension was given
+if [[ "$API_KEY" != "/etc/ipa/.panrc" ]]; then
+    if [ -d "API_KEY" ]; then
+        # Parsed string is a directory
+        API_KEY="${API_KEY}/.panrc"
+    elif [[ "$API_KEY" != *\/* ]]; then
+        # Parsed string is a file extension
+        API_KEY="/etc/ipa/.panrc.$API_KEY"
+    fi
+    if [ -f "$API_KEY" ]; then
+        printf 'Parsed API key file exists: %s\n' "$API_KEY"
+    else
+        printf 'ERROR: Parsed API key file doesn't exist: %s\n' "$API_KEY"
+        show_help >&2
+        exit 1
+    fi
+fi
+
 # Set the default service for the Service Principal
 if [[ -z $SERVICE ]]; then
     SERVICE="HTTP"
@@ -173,12 +195,13 @@ if [[ ! -z $TYPE ]]; then
          IPA_OPTS="$IPA_OPTS -g $BITS"
     fi
 fi
-
 # Parse YEAR option to pan_instcert
-if [[ -z $YEAR ]]; then
-    INST_OPTS=""
-else
-    INST_OPTS="-Y"
+if ! [[ -z $YEAR ]]; then
+    INST_OPTS="$INST_OPTS -Y"
+fi
+# Parse API key file to pan_instcert
+if [[ "$API_KEY" != "/etc/ipa/.panrc" ]]; then
+    INST_OPTS="$INST_OPTS -k $API_KEY"
 fi
 
 # Verbosely log SSL/TLS profile names (if any) and only allow secondary if a primary is given
