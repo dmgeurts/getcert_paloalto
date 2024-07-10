@@ -81,8 +81,10 @@ The following will detail how to automate the ipa-getcert certificate process fo
 # The Scripts
 There are two scripts:
 + "pan_getcert" --> https://github.com/dmgeurts/getcert_paloalto/blob/master/pan_getcert
+  + `wget https://github.com/dmgeurts/getcert_paloalto/raw/master/pan_getcert`
   + Obtains a certificate from FreeIPA and sets the post-save to use pan_instcert for automatic installation of a renewed certificate.
 + "pan_instcert" --> https://github.com/dmgeurts/getcert_paloalto/blob/master/pan_instcert
+  + `wget https://github.com/dmgeurts/getcert_paloalto/raw/master/pan_instcert`
   + Installs and optionally attaches the certificate to up to two SSL/TLS Profiles.
     + Management interface SSL/TLS Profile
     + Global Protect certificates can be attached to one or two SSL/TLS Profiles, as required.
