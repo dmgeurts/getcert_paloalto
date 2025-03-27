@@ -1,5 +1,14 @@
 #!/bin/bash
 
+## Fixed variables
+API_KEY="/etc/ipa/.panrc"
+CRT_PATH="/etc/ssl/certs"
+KEY_PATH="/etc/ssl/private"
+TEMP_PFX="/tmp/getcert_pkcs12.pfx"
+TEMP_PWD=$(openssl rand -hex 15)
+VERBOSE=0
+OPTIND=1
+
 ## Logging
 LOG="/var/log/pan_instcert.log"
 wlog() {
@@ -16,7 +25,7 @@ This script uploads a certificate issued by ipa-getcert to a Palo Alto firewall
 or Panorama and optionally adds it to up to two SSL/TLS Profiles.
 
     FQDN              Fully qualified name of the Palo Alto firewall or Panorama
-                      interface. Must be reachable from this host on port TCP/443.
+                      interface. It must be reachable from this host on port TCP/443.
     -c CERT_CN        REQUIRED. Common Name (Subject) of the certificate, to find
                       the certificate and key files.
 
@@ -25,25 +34,20 @@ OPTIONS:
                       certificate Common Name.
     -Y                Append the current year '_YYYY' to the certificate name.
     -k key(path|ext)  API key file location or extension.
+    -C path           Certificate path, default: $CRT_PATH
+    -K path           Certificate key path, default: $KEY_PATH
 
     -p PROFILE_NAME   Apply the certificate to a (primary) SSL/TLS Service Profile.
     -s PROFILE_NAME   Apply the certificate to a (secondary) SSL/TLS Service Profile.
 
-
+    -b                Don't check ipa-getcert certificate status (run blind).
     -h                Display this help and exit.
     -v                Verbose mode.
 EOF
 }
 
-## Fixed variables
-API_KEY="/etc/ipa/.panrc"
-TEMP_PFX="/tmp/getcert_pkcs12.pfx"
-TEMP_PWD=$(openssl rand -hex 15)
-VERBOSE=0
-OPTIND=1
-
 ## Read/interpret optional arguments
-while getopts c:n:Yp:s:k:vh opt; do
+while getopts c:n:Yp:s:k:C:K:bvh opt; do
     case $opt in
         c)  CERT_CN=$OPTARG
             ;;
@@ -52,6 +56,10 @@ while getopts c:n:Yp:s:k:vh opt; do
         Y)  YEAR="_$(date +'%Y')"
             ;;
         k)  API_KEY=$OPTARG
+            ;;
+        C)  CRT_PATH=$OPTARG
+            ;;
+        K)  KEY_PATH=$OPTARG
             ;;
         p)  if grep -q -P '(^[\w-]+$)' <<< "$OPTARG"; then
                 SSL_TLS_PROFILE_1=$OPTARG
@@ -68,6 +76,8 @@ while getopts c:n:Yp:s:k:vh opt; do
                 printf 'Ensure the name does not contain dots or spaces.\n'
                 exit 2
             fi
+            ;;
+        b)  BLIND=true
             ;;
         v)  VERBOSE=$((VERBOSE+1))
             ;;
@@ -123,7 +133,19 @@ if [[ "$API_KEY" != "/etc/ipa/.panrc" ]]; then
     fi
 fi
 
+# Verify that CRT_PATH and KEY_PATH are valid paths
+if [[ ! -d "$CRT_PATH" ]]; then
+    wlog "ERROR: Parsed certificate path does not exist: $CRT_PATH\n"
+    show_help >&2
+    exit 1
+elif [[ ! -d "$KEY_PATH" ]]; then
+    wlog "ERROR: Parsed key path does not exist: $KEY_PATH\n"
+    show_help >&2
+    exit 1
+fi
+
 (( $VERBOSE > 0 )) && wlog "Parsed certificate Name: $CERT_NAME\n"
+(( $VERBOSE > 0 )) && wlog "Parsed certificate Path: $CRT_PATH\n"
 
 # Check that a single valid FQDN was parsed for the Palo Alto API interface
 if grep -q -P '(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$)' <<< "$@"; then
@@ -166,24 +188,52 @@ else
 fi
 
 ## Upload and install the certificate to Palo Alto firewall or Panorama.
-# Verify state of the certificate is MONITORING or POST_SAVED_CERT
-KEY_FILE="/etc/ssl/private/${CERT_CN}.key"
-CRT_FILE="/etc/ssl/certs/${CERT_CN}.crt"
-CERT_STATUS=$(ipa-getcert status -f "$CRT_FILE" -v)
-# Verify both certificate and key files exist
-if [[ ! -f "$KEY_FILE" ]] || [[ ! -f "$CRT_FILE" ]]; then
-    wlog "ERROR: Missing certificate or key files. Check if the following files exist:\n"
-    wlog "Key file: $KEY_FILE\nCert file: $CRT_FILE\n"
-    exit 10
-elif ! [[ "$CERT_STATUS" =~ (MONITORING|POST_SAVED_CERT) ]]; then
-    wlog 'ERROR: Problem encountered with the requested certificate.\nInstallation aborted, verify that the certificate status is "MONITORING".\n'
-    exit 11
+# Verify file extensions and that files exist
+if [[ ! "$KEY_PATH" =~ "$CERT_CN" ]]; then
+    # Assume the file extension is .key
+	KEY_FILE="$KEY_PATH/${CERT_CN}.key"
 else
-    (( $VERBOSE > 0 )) && wlog "Certmonger certificate ${CERT_STATUS,}\n"
+    # Assume the key file `privkey.pem`
+	KEY_FILE="$KEY_PATH/privkey.pem"
+fi
+if [[ ! -f "$KEY_FILE" ]]; then
+	wlog "ERROR: Parsed key file does not exist: $KEY_FILE\n"
+	show_help >&2
+	exit 10
+fi
+if [[ ! "$CRT_PATH" =~ "$CERT_CN" ]]; then
+    # Assume the file extension is .crt or .pem
+	if [[ -f "$CRT_PATH/${CERT_CN}.crt" ]]; then
+		CRT_FILE="$CRT_PATH/${CERT_CN}.crt"
+    elif [[ -f ""$CRT_PATH/${CERT_CN}.pem" ]]; then
+		CRT_FILE="$CRT_PATH/${CERT_CN}.pem"
+	else
+		wlog "ERROR: Parsed certificate file does not exist: $CRT_PATH/${CERT_CN}.{crt,pem}\n"
+		show_help >&2
+		exit 10
+	fi
+elif [[ -f "$CRT_PATH/cert.pem" ]]; then
+	CRT_FILE="$CRT_PATH/cert.pem"
+else
+	wlog "ERROR: Parsed certificate file does not exist: $CRT_PATH/cert.pem\n"
+	show_help >&2
+	exit 10
+fi
+if ! $BLIND; then
+	# Verify the state of the certificate is MONITORING or POST_SAVED_CERT (if not in blind mode)
+	CERT_STATUS=$(ipa-getcert status -f "$CRT_FILE" -v)
+	if ! [[ "$CERT_STATUS" =~ (MONITORING|POST_SAVED_CERT) ]]; then
+    	wlog 'ERROR: Problem encountered with the requested certificate.\nInstallation aborted, verify that the certificate status is "MONITORING".\n'
+	    exit 11
+	else
+    	(( $VERBOSE > 0 )) && wlog "Certmonger certificate ${CERT_STATUS,}\n"
+	fi
+else
+	(( $VERBOSE > 0 )) && wlog "Running in blind mode, not checking ipa-getcert certificate status.\n"
 fi
 printf '\n'
 
-# Create a password protected PKCS12 file. If you need an intermediary certificate Manually load it on the Palo Alto firewall or Panorama.
+# Create a password-protected PKCS12 file. If you need an intermediary certificate, manually load it on the Palo Alto firewall or Panorama.
 openssl pkcs12 -export -out "$TEMP_PFX" -inkey "$KEY_FILE" -in "$CRT_FILE" -passout pass:$TEMP_PWD
 
 # Upload it to the firewall
@@ -206,7 +256,7 @@ else
 fi
 rm "$TEMP_PFX"
 
-# Install/update the certificate to given SSL/TLS Profile(s)
+# Install/update the certificate to the given SSL/TLS Profile(s)
 if [[ ! -z $SSL_TLS_PROFILE_1 ]]; then
     RESULT=$(/usr/local/bin/panxapi.py -h $PAN_MGMT -K $API_KEY -S "<certificate>$CERT_NAME</certificate>" "/config/shared/ssl-tls-service-profile/entry[@name='$SSL_TLS_PROFILE_1']" 2>&1)
     (( $VERBOSE > 0 )) && wlog "$RESULT\n"
