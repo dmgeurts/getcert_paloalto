@@ -205,7 +205,7 @@ if [[ ! "$CRT_PATH" =~ "$CERT_CN" ]]; then
     # Assume the file extension is .crt or .pem
 	if [[ -f "$CRT_PATH/${CERT_CN}.crt" ]]; then
 		CRT_FILE="$CRT_PATH/${CERT_CN}.crt"
-    elif [[ -f ""$CRT_PATH/${CERT_CN}.pem" ]]; then
+    elif [[ -f "$CRT_PATH/${CERT_CN}.pem" ]]; then
 		CRT_FILE="$CRT_PATH/${CERT_CN}.pem"
 	else
 		wlog "ERROR: Parsed certificate file does not exist: $CRT_PATH/${CERT_CN}.{crt,pem}\n"
