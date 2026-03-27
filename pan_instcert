@@ -234,7 +234,8 @@ fi
 printf '\n'
 
 # Create a password-protected PKCS12 file. If you need an intermediary certificate, manually load it on the Palo Alto firewall or Panorama.
-openssl pkcs12 -export -out "$TEMP_PFX" -inkey "$KEY_FILE" -in "$CRT_FILE" -passout pass:$TEMP_PWD
+# User `-legacy` reverts the output to RC2-40-CBC or 3DES for encryption and SHA-1 for the MAC. As PanOS doesn't support the new methods yet.
+openssl pkcs12 -export -legacy -out "$TEMP_PFX" -inkey "$KEY_FILE" -in "$CRT_FILE" -passout pass:$TEMP_PWD
 
 # Upload it to the firewall
 OUTPUT=$(curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
