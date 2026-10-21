@@ -306,7 +306,7 @@ wlog "Starting commit of changes by admin $PAN_ADMIN, please be patient.\n"
 SECONDS=0
 RESULT=$(/usr/local/bin/panxapi.py -h "$PAN_MGMT" -K "$API_KEY" -C "<commit><partial><admin><member>${PAN_ADMIN}</member></admin></partial></commit>" --sync 2>&1)
 wlog "$RESULT\n"
-if [[ ! "$RESULT" =~ (command succeeded) ]]; then
+if [[ ! "$RESULT" =~ (commit: success) ]]; then
     wlog "ERROR: Commit failed.\n"
     exit 13
 fi
