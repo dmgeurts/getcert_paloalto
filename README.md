@@ -76,8 +76,9 @@ The following will detail how to automate the ipa-getcert certificate process fo
     `panxapi.py -h PAN_MGMT_IP_OR_FQDN -l USERNAME:'PASSWORD' -k`
     + Create the .panrc file, and enter the api_key as follows.
     `sudo vi /etc/ipa/.panrc`
-    At a bare minimum it should look like:
+    At a bare minimum, it should look like:
     ```
+    api_username=api-admin
     api_key=C2M1P2h1tDEz8zF3SwhF2dWC1gzzhnE1qU39EmHtGZM=
     ```
     + Secure the file:
