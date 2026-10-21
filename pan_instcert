@@ -100,6 +100,14 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+## Only one installation at a time. A second commit enqueued while another is running makes
+## PanOS drop the management connections of the first run (seen as false commit failures).
+exec 9>/var/lock/pan_instcert.lock
+if ! flock -w 1800 9; then
+    echo "ERROR: Another pan_instcert is still running, gave up waiting for the lock."
+    exit 14
+fi
+
 ## Start logging
 wlog "START of pan_instcert.\n"
 
@@ -304,12 +312,33 @@ if [[ -z $PAN_ADMIN ]]; then
 fi
 wlog "Starting commit of changes by admin $PAN_ADMIN, please be patient.\n"
 SECONDS=0
-RESULT=$(/usr/local/bin/panxapi.py -h "$PAN_MGMT" -K "$API_KEY" -C "<commit><partial><admin><member>${PAN_ADMIN}</member></admin></partial></commit>" --sync 2>&1)
+# Enqueue the commit and poll the job, rather than using a single long-lived --sync connection.
+# Polling errors (dropped connections) are retried instead of being treated as a failed commit.
+RESULT=$(/usr/local/bin/panxapi.py -h "$PAN_MGMT" -K "$API_KEY" -C "<commit><partial><admin><member>${PAN_ADMIN}</member></admin></partial></commit>" 2>&1)
 wlog "$RESULT\n"
 if [[ ! "$RESULT" =~ (commit: success) ]]; then
     wlog "ERROR: Commit failed.\n"
     exit 13
 fi
+JOB_ID=$(grep -o -P 'jobid \K[0-9]+' <<< "$RESULT" | head -n1)
+if [[ -z $JOB_ID ]]; then
+    wlog "WARNING: No job ID found in the commit response, not waiting for the commit to finish. Verify the commit on the firewall.\n"
+else
+    JOB_DONE=false
+    while (( SECONDS < 1800 )); do
+        sleep 10
+        JOB=$(/usr/local/bin/panxapi.py -h "$PAN_MGMT" -K "$API_KEY" -xo "<show><jobs><id>${JOB_ID}</id></jobs></show>" 2>&1)
+        if [[ "$JOB" =~ \<status\>FIN\</status\> ]]; then
+            JOB_DONE=true
+            wlog "Commit job $JOB_ID finished:\n$JOB\n"
+            break
+        fi
+        (( $VERBOSE > 0 )) && wlog "Commit job $JOB_ID still running or not reachable, retrying (${SECONDS}s).\n"
+    done
+    if ! $JOB_DONE || [[ ! "$JOB" =~ \<result\>OK\</result\> ]]; then
+        wlog "ERROR: Commit job $JOB_ID failed or did not finish.\n"
+        exit 13
+    fi
+fi
 wlog "The commit took $SECONDS seconds to complete.\n"
 wlog "END - Finished certificate installation to: $PAN_MGMT\n"
-
