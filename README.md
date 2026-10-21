@@ -33,9 +33,15 @@ The following will detail how to automate the ipa-getcert certificate process fo
   + pan-python (https://pypi.org/project/pan-python/)
     + _**Note:** pan-os-python is a Palo Alto managed Python library, but doesn't cater to managing certificates AFAIK. (https://github.com/PaloAltoNetworks/pan-os-python)_
   ```
-  # Based on Ubuntu 22.04
+  # Ubuntu 22.04:
   sudo apt install python3-pip
   sudo pip install pan-python
+
+  # Ubuntu 24.04
+  sudo apt install python3-venv
+  sudo python3 -m venv /opt/pan-python
+  sudo /opt/pan-python/bin/pip install pan-python
+  sudo ln -s /opt/pan-python/bin/panxapi.py /usr/local/bin/panxapi.py
   ```
 
 + A Service Principal for the firewall:
