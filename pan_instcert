@@ -4,7 +4,8 @@
 API_KEY="/etc/ipa/.panrc"
 CRT_PATH="/etc/ssl/certs"
 KEY_PATH="/etc/ssl/private"
-TEMP_PFX="/tmp/getcert_pkcs12.pfx"
+umask 077
+TEMP_KEY=$(mktemp /tmp/getcert_key.XXXXXX) || exit 1
 TEMP_PWD=$(openssl rand -hex 15)
 VERBOSE=0
 OPTIND=1
@@ -13,9 +14,11 @@ OPTIND=1
 LOG="/var/log/pan_instcert.log"
 wlog() {
     printf '%b' "$*"
-    printf "[$(date --rfc-3339=seconds)]: $*" >> "$LOG"
+    printf '[%s]: %b' "$(date --rfc-3339=seconds)" "$*" >> "$LOG"
 }
 trap 'wlog "ERROR - Certificate installation failed.\n"' TERM HUP
+# Always remove the temporary encrypted key file, whichever way the script exits
+trap 'rm -f "$TEMP_KEY"' EXIT
 
 ## Usage info
 show_help() {
@@ -95,6 +98,14 @@ shift "$((OPTIND-1))"   # Discard the options and sentinel --
 if [ "$EUID" -ne 0 ]; then
     echo "Please run as root"
     exit 1
+fi
+
+## Only one installation at a time. A second commit enqueued while another is running makes
+## PanOS drop the management connections of the first run (seen as false commit failures).
+exec 9>/var/lock/pan_instcert.lock
+if ! flock -w 1800 9; then
+    echo "ERROR: Another pan_instcert is still running, gave up waiting for the lock."
+    exit 14
 fi
 
 ## Start logging
@@ -182,6 +193,8 @@ if ! grep -q -P '^api_key=' "$API_KEY"; then
     exit 5
 else
     (( $VERBOSE > 0 )) && wlog "API key found in: $API_KEY\n"
+    # Keep the file path, the admin name for the partial commit is read from it.
+    API_KEY_FILE="$API_KEY"
     # Commit the cardinal sin of changing the type of the variable from file-path to string.
     API_KEY=$(grep -P '^api_key=' "$API_KEY")
     API_KEY="${API_KEY#api_key=}"
@@ -233,18 +246,26 @@ else
 fi
 printf '\n'
 
-# Create a password-protected PKCS12 file. If you need an intermediary certificate, manually load it on the Palo Alto firewall or Panorama.
-# User `-legacy` reverts the output to RC2-40-CBC or 3DES for encryption and SHA-1 for the MAC. As PanOS doesn't support the new methods yet.
-openssl pkcs12 -export -legacy -out "$TEMP_PFX" -inkey "$KEY_FILE" -in "$CRT_FILE" -passout pass:$TEMP_PWD
+# PanOS 12.1 rejects the PKCS12 files that PanOS 11.1 accepted ("Failed to extract certificate"),
+# so the certificate and private key are imported separately as PEM.
+# The private key must be passphrase protected for the import: write a temporary PKCS#8 AES-256 copy.
+# If you need an intermediary certificate, manually load it on the Palo Alto firewall or Panorama.
+if ! openssl pkcs8 -topk8 -v2 aes-256-cbc -in "$KEY_FILE" -out "$TEMP_KEY" -passout pass:$TEMP_PWD; then
+    wlog "ERROR: Unable to create the temporary encrypted key file.\n"
+    exit 12
+fi
 
-# Upload it to the firewall
-OUTPUT=$(curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
+# Upload the certificate to the firewall
+OUTPUT=$(curl -k --form file=@"$CRT_FILE" "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pem&key=$API_KEY" && echo " ")
 CRT_STATUS=$?
 wlog "XML API output for crt: $OUTPUT\n"
+# curl exits 0 on an API error, so the XML response must be checked too
+[[ "$OUTPUT" =~ status=\"success\" ]] || CRT_STATUS=1
 if [ $CRT_STATUS -eq 0 ]; then
-    OUTPUT=$(curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
+    OUTPUT=$(curl -k --form file=@"$TEMP_KEY" "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pem&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
     KEY_STATUS=$?
     wlog "XML API output for key: $OUTPUT\n"
+    [[ "$OUTPUT" =~ status=\"success\" ]] || KEY_STATUS=1
     if [ $KEY_STATUS -eq 0 ]; then
         wlog "Finished uploading certificate: $CERT_NAME\n"
     elif [ $KEY_STATUS -ne 0 ]; then
@@ -255,7 +276,7 @@ else
     wlog "ERROR: Upload of certificate failed.\n"
     exit 12
 fi
-rm "$TEMP_PFX"
+rm -f "$TEMP_KEY"
 
 # Install/update the certificate to the given SSL/TLS Profile(s)
 if [[ ! -z $SSL_TLS_PROFILE_1 ]]; then
@@ -283,10 +304,41 @@ if (( $VERBOSE > 0 )) && [[ ! -z $PROFILES ]]; then
 fi
 
 ## Save/commit the changes
-wlog "Starting commit, please be patient.\n"
+# Only commit the changes made by the API admin, not other admins' pending changes.
+PAN_ADMIN=$(grep -P '^api_username=' "$API_KEY_FILE" | head -n1 | cut -d= -f2-)
+if [[ -z $PAN_ADMIN ]]; then
+    wlog "ERROR: No api_username found in: $API_KEY_FILE, unable to do a partial commit.\n"
+    exit 5
+fi
+wlog "Starting commit of changes by admin $PAN_ADMIN, please be patient.\n"
 SECONDS=0
-RESULT=$(/usr/local/bin/panxapi.py -h $PAN_MGMT -K $API_KEY -C '' --sync 2>&1)
+# Enqueue the commit and poll the job, rather than using a single long-lived --sync connection.
+# Polling errors (dropped connections) are retried instead of being treated as a failed commit.
+RESULT=$(/usr/local/bin/panxapi.py -h "$PAN_MGMT" -K "$API_KEY" -C "<commit><partial><admin><member>${PAN_ADMIN}</member></admin></partial></commit>" 2>&1)
 wlog "$RESULT\n"
+if [[ ! "$RESULT" =~ (commit: success) ]]; then
+    wlog "ERROR: Commit failed.\n"
+    exit 13
+fi
+JOB_ID=$(grep -o -P 'jobid \K[0-9]+' <<< "$RESULT" | head -n1)
+if [[ -z $JOB_ID ]]; then
+    wlog "WARNING: No job ID found in the commit response, not waiting for the commit to finish. Verify the commit on the firewall.\n"
+else
+    JOB_DONE=false
+    while (( SECONDS < 1800 )); do
+        sleep 10
+        JOB=$(/usr/local/bin/panxapi.py -h "$PAN_MGMT" -K "$API_KEY" -xo "<show><jobs><id>${JOB_ID}</id></jobs></show>" 2>&1)
+        if [[ "$JOB" =~ \<status\>FIN\</status\> ]]; then
+            JOB_DONE=true
+            wlog "Commit job $JOB_ID finished:\n$JOB\n"
+            break
+        fi
+        (( $VERBOSE > 0 )) && wlog "Commit job $JOB_ID still running or not reachable, retrying (${SECONDS}s).\n"
+    done
+    if ! $JOB_DONE || [[ ! "$JOB" =~ \<result\>OK\</result\> ]]; then
+        wlog "ERROR: Commit job $JOB_ID failed or did not finish.\n"
+        exit 13
+    fi
+fi
 wlog "The commit took $SECONDS seconds to complete.\n"
 wlog "END - Finished certificate installation to: $PAN_MGMT\n"
-
