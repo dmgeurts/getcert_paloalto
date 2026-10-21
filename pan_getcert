@@ -114,7 +114,9 @@ fi
 # Check that a single valid FQDN was parsed for the Palo Alto API interface
 if grep -q -P '(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$)' <<< "$@"; then
     PAN_MGMT="${@,,}"
-    printf '  verbose=%d\n  CERT_CN: %s\n  CERT_NAME: %s\n  PAN_FQDN: %s\n' "$VERBOSE" "$CERT_CN" "$CERT_NAME$YEAR" "$PAN_MGMT"
+    if (( $VERBOSE > 0 )); then
+        printf '  verbose=%d\n  CERT_CN: %s\n  CERT_NAME: %s\n  PAN_FQDN: %s\n' "$VERBOSE" "$CERT_CN" "$CERT_NAME$YEAR" "$PAN_MGMT"
+    fi
     if ! nc -z $PAN_MGMT 443 2>/dev/null; then
         printf 'ERROR: Palo Alto device unreachable at: https://%s/\n' "$PAN_MGMT"
         exit 4
@@ -162,6 +164,10 @@ fi
 # Verify the parsed certificate type and bit length
 if [[ ! -z $TYPE ]]; then
     TYPE=${TYPE^^}
+    if [[ -z $BITS ]]; then
+        # Default key length when only a key type was given
+        [[ "$TYPE" =~ ^(EC|ECDSA)$ ]] && BITS=256 || BITS=2048
+    fi
     if [[ "$TYPE" =~ ^(RSA|DSA)$ ]]; then
         if [ "$BITS" -lt 2048 ]; then
             printf 'ERROR: RSA/DSA key length must be at least 2048 bits\n'

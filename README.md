@@ -30,6 +30,7 @@ The following will detail how to automate the ipa-getcert certificate process fo
 
 + A linux-based container, VM, or host with reachability to your device’s management interface and the following packages installed:
   + ipa-getcert - part of ipa-client-install on a FreeIPA enrolled host.
+  + netcat (`nc`, package `netcat-openbsd`) - used to check the firewall is reachable on TCP/443.
   + pan-python (https://pypi.org/project/pan-python/)
     + _**Note:** pan-os-python is a Palo Alto managed Python library, but doesn't cater to managing certificates AFAIK. (https://github.com/PaloAltoNetworks/pan-os-python)_
   ```
@@ -43,6 +44,8 @@ The following will detail how to automate the ipa-getcert certificate process fo
   sudo /opt/pan-python/bin/pip install pan-python
   sudo ln -s /opt/pan-python/bin/panxapi.py /usr/local/bin/panxapi.py
   ```
+
+  **Note:** `pan_instcert` commits only the changes made by the API admin (partial commit), so `/etc/ipa/.panrc` must also contain `api_username=<admin that owns the API key>`.
 
 + A Service Principal for the firewall:
   + Manually create the host with the FQDN of the firewall management interface.
