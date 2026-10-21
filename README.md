@@ -45,7 +45,7 @@ The following will detail how to automate the ipa-getcert certificate process fo
   sudo ln -s /opt/pan-python/bin/panxapi.py /usr/local/bin/panxapi.py
   ```
 
-  **Note:** `pan_instcert` commits only the changes made by the API admin (partial commit), so `/etc/ipa/.panrc` must also contain `api_username=<admin that owns the API key>`.
+  **Note:** `pan_instcert` commits only the changes made by the API admin (partial commit), so `/etc/ipa/.panrc` must contain `api_username=<admin that owns the API key>`. If the API key is regenerated for a different admin, update `api_username` too.
 
 + A Service Principal for the firewall:
   + Manually create the host with the FQDN of the firewall management interface.
@@ -107,6 +107,7 @@ There are two scripts:
     - Post-save will run on the first certificate save, using pan_instcert for certificate installation.
 
 ### pan_instcert performs the following actions:
+0. Takes a lock (`/var/lock/pan_instcert.lock`). A second run waits, up to 30 minutes, for the first to finish. PanOS drops management connections when a commit is enqueued while another is running, and renewals of several certificates can coincide.
 1. Randomly generates a certificate passphrase using “openssl rand”.
 2. Creates a temporary, passphrase-protected (PKCS#8, AES-256) copy of the private key issued by ipa-getcert.
 3. Uploads the certificate and the temporary encrypted key to the firewall as PEM, using the randomly-generated passphrase. (PanOS 12.1 rejects PKCS12 uploads that PanOS 11.1 accepts.)
@@ -115,7 +116,7 @@ There are two scripts:
 5. (Optionally) applies the certificate to up to two SSL/TLS Profiles.
     + Single SSL/TLS Profile: For example for the Management UI SSL/TLS profile.
     + Two SSL/TLS Profiles: For example for GlobalProtect Portal and GlobalProtect Gateway SSL/TLS Profiles.
-6. Commits the candidate configuration (synchronously) and reports the commit result.
+6. Commits only the changes made by the API admin (a partial commit, so other admins' pending changes are left alone). The commit job is enqueued and then polled until it finishes, so a dropped connection while waiting doesn't count as a failed commit. The result of the job is logged and a failed commit makes the script exit with an error.
 7. Logs all output to `/var/log/pan_instcert.log`.
 
 ### Script options
@@ -261,18 +262,20 @@ If successful, you should see something similar to the following in the log file
 [2023-04-27 15:15:34+00:00]: XML API output for crt: <response status="success"><result>Successfully imported gp.domain.com_2023 into candidate configuration</result></response>
 [2023-04-27 15:15:35+00:00]: XML API output for key: <response status="success"><result>Successfully imported gp.domain.com_2023 into candidate configuration</result></response>
 [2023-04-27 15:15:35+00:00]: Finished uploading certificate: gp.domain.com_2023
-[2023-04-27 15:15:37+00:00]: Starting commit, please be patient.
-[2023-04-27 15:17:01+00:00]: commit: success: "Configuration committed successfully"
+[2023-04-27 15:15:37+00:00]: Starting commit of changes by admin api-admin, please be patient.
+[2023-04-27 15:17:01+00:00]: Commit job <ID> finished:
+(the job details from the firewall, containing <status>FIN</status> and <result>OK</result>)
 [2023-04-27 15:17:01+00:00]: The commit took 84 seconds to complete.
 [2023-04-27 15:17:01+00:00]: END - Finished certificate installation to: fw01.domain.local
 ```
 
-If the SSL/TLS Service Profile doesn't exist it will be created, but the following error will be shown and the commit will fail:
+If the SSL/TLS Service Profile doesn't exist it will be created, but the commit job will fail validation. The job details in the log then show `<result>FAIL</result>` with details such as:
 ```
-commit: success: "Validation Error:
+Validation Error:
  ssl-tls-service-profile -> Test_profile  is missing 'protocol-settings'
- ssl-tls-service-profile is invalid"
+ ssl-tls-service-profile is invalid
 ```
+and pan_instcert logs `ERROR: Commit job <ID> failed or did not finish.` and exits with status 13.
 
 Also check the following locations on the Palo Alto Networks firewall for additional confirmation:
 **Monitor –> Logs –> Configuration**
@@ -282,3 +285,14 @@ There should be 3-5 operations shown, depending on whether or not the SSL/TLS se
 2. A web upload to /config/shared/certificate/entry[@name=’FQDN(\_YYYY)’] under the FreeIPA root CA certificate.
 3. One or more web “set” commands to /config/shared/ssl-tls-service-profile/entry[@name=’YOUR_PROFILE(S)’]
 4. And a web “commit” operation.
+
+
+# PanOS Versions and Troubleshooting
+Tested against PanOS 12.1.7-h3 (PA-VM) with FreeIPA, Ubuntu 24.04 and pan-python 0.26.0.
+
++ **PKCS12 uploads are rejected by PanOS 12.1.** Earlier versions of pan_instcert uploaded a PKCS12 file, which worked on PanOS 11.1 but fails on 12.1 with `Failed to extract certificate` (regardless of the PKCS12 encryption used, and also for a plain self-signed RSA certificate). pan_instcert now imports the certificate and the private key separately as PEM. The private key is passphrase protected for the import using a temporary PKCS#8 AES-256 copy, which is deleted afterwards.
++ **A commit can take several minutes**, 3 minutes on a small virtual firewall. pan_getcert waits up to 10 minutes for the post-save process.
++ **pan_getcert reporting FINISHED doesn't prove the installation worked.** certmonger moves the certificate to MONITORING whatever the outcome of the post-save command. Always check `/var/log/pan_instcert.log`.
++ **Regenerating the API key or setting the API Key Certificate on the firewall (Device > Setup > Management > Authentication Settings > API Key Certificate) invalidates the existing API key.** pan_instcert will then fail with `API Error: Invalid Credential` (HTTP 403) until the new key is stored as `api_key=` in `/etc/ipa/.panrc`. Generate the key again with `panxapi.py -h FQDN -l USERNAME:'PASSWORD' -k` and update the file. Do this before certificates are next renewed. The PanOS system log may also show an advisory that the API key was generated with a deprecated algorithm until an API Key Certificate is configured. This doesn't affect these scripts. Use a dedicated certificate for the API Key Certificate, not a certificate that is renewed by these scripts.
++ **The FreeIPA root CA is not uploaded by these scripts.** If the firewall should send or validate the full chain (for example for GlobalProtect), import the FreeIPA root CA manually.
++ **Partial commit.** pan_instcert only commits the changes made by the API admin. Another admin's pending changes to the same objects can make that commit fail validation, which is the safe outcome.
