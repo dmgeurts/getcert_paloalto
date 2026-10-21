@@ -108,10 +108,10 @@ There are two scripts:
 
 ### pan_instcert performs the following actions:
 1. Randomly generates a certificate passphrase using “openssl rand”.
-2. Creates a temporary, password-protected PKCS12 cert file `/tmp/getcert_pkcs12.pfx` from the individual private and public keys issued by ipa-getcert.
-3. Uploads the temporary PKCS12 file to the firewall using the randomly-generated passphrase.
+2. Creates a temporary, passphrase-protected (PKCS#8, AES-256) copy of the private key issued by ipa-getcert.
+3. Uploads the certificate and the temporary encrypted key to the firewall as PEM, using the randomly-generated passphrase. (PanOS 12.1 rejects PKCS12 uploads that PanOS 11.1 accepts.)
     + (Optionally) adds a year (in 4-digit notation) to the certificate name.
-4. Deletes the temporary PKCS12 certificate from the Linux host.
+4. Deletes the temporary encrypted key from the Linux host.
 5. (Optionally) applies the certificate to up to two SSL/TLS Profiles.
     + Single SSL/TLS Profile: For example for the Management UI SSL/TLS profile.
     + Two SSL/TLS Profiles: For example for GlobalProtect Portal and GlobalProtect Gateway SSL/TLS Profiles.

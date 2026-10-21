@@ -5,7 +5,7 @@ API_KEY="/etc/ipa/.panrc"
 CRT_PATH="/etc/ssl/certs"
 KEY_PATH="/etc/ssl/private"
 umask 077
-TEMP_PFX=$(mktemp /tmp/getcert_pkcs12.XXXXXX) || exit 1
+TEMP_KEY=$(mktemp /tmp/getcert_key.XXXXXX) || exit 1
 TEMP_PWD=$(openssl rand -hex 15)
 VERBOSE=0
 OPTIND=1
@@ -17,8 +17,8 @@ wlog() {
     printf '[%s]: %b' "$(date --rfc-3339=seconds)" "$*" >> "$LOG"
 }
 trap 'wlog "ERROR - Certificate installation failed.\n"' TERM HUP
-# Always remove the temporary PKCS12 file, whichever way the script exits
-trap 'rm -f "$TEMP_PFX"' EXIT
+# Always remove the temporary encrypted key file, whichever way the script exits
+trap 'rm -f "$TEMP_KEY"' EXIT
 
 ## Usage info
 show_help() {
@@ -238,18 +238,23 @@ else
 fi
 printf '\n'
 
-# Create a password-protected PKCS12 file. If you need an intermediary certificate, manually load it on the Palo Alto firewall or Panorama.
-# User `-legacy` reverts the output to RC2-40-CBC or 3DES for encryption and SHA-1 for the MAC. As PanOS doesn't support the new methods yet.
-openssl pkcs12 -export -legacy -out "$TEMP_PFX" -inkey "$KEY_FILE" -in "$CRT_FILE" -passout pass:$TEMP_PWD
+# PanOS 12.1 rejects the PKCS12 files that PanOS 11.1 accepted ("Failed to extract certificate"),
+# so the certificate and private key are imported separately as PEM.
+# The private key must be passphrase protected for the import: write a temporary PKCS#8 AES-256 copy.
+# If you need an intermediary certificate, manually load it on the Palo Alto firewall or Panorama.
+if ! openssl pkcs8 -topk8 -v2 aes-256-cbc -in "$KEY_FILE" -out "$TEMP_KEY" -passout pass:$TEMP_PWD; then
+    wlog "ERROR: Unable to create the temporary encrypted key file.\n"
+    exit 12
+fi
 
-# Upload it to the firewall
-OUTPUT=$(curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
+# Upload the certificate to the firewall
+OUTPUT=$(curl -k --form file=@"$CRT_FILE" "https://$PAN_MGMT/api/?type=import&category=certificate&certificate-name=$CERT_NAME&format=pem&key=$API_KEY" && echo " ")
 CRT_STATUS=$?
 wlog "XML API output for crt: $OUTPUT\n"
 # curl exits 0 on an API error, so the XML response must be checked too
 [[ "$OUTPUT" =~ status=\"success\" ]] || CRT_STATUS=1
 if [ $CRT_STATUS -eq 0 ]; then
-    OUTPUT=$(curl -k --form file=@$TEMP_PFX "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pkcs12&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
+    OUTPUT=$(curl -k --form file=@"$TEMP_KEY" "https://$PAN_MGMT/api/?type=import&category=private-key&certificate-name=$CERT_NAME&format=pem&passphrase=$TEMP_PWD&key=$API_KEY" && echo " ")
     KEY_STATUS=$?
     wlog "XML API output for key: $OUTPUT\n"
     [[ "$OUTPUT" =~ status=\"success\" ]] || KEY_STATUS=1
@@ -263,7 +268,7 @@ else
     wlog "ERROR: Upload of certificate failed.\n"
     exit 12
 fi
-rm -f "$TEMP_PFX"
+rm -f "$TEMP_KEY"
 
 # Install/update the certificate to the given SSL/TLS Profile(s)
 if [[ ! -z $SSL_TLS_PROFILE_1 ]]; then
