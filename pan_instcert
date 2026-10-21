@@ -12,7 +12,7 @@ OPTIND=1
 ## Logging
 LOG="/var/log/pan_instcert.log"
 wlog() {
-    printf "$*"
+    printf '%b' "$*"
     printf "[$(date --rfc-3339=seconds)]: $*" >> "$LOG"
 }
 trap 'wlog "ERROR - Certificate installation failed.\n"' TERM HUP
@@ -94,7 +94,7 @@ shift "$((OPTIND-1))"   # Discard the options and sentinel --
 ## This script must be run as root
 if [ "$EUID" -ne 0 ]; then
     echo "Please run as root"
-    exit
+    exit 1
 fi
 
 ## Start logging
@@ -117,7 +117,7 @@ CERT_NAME="$CERT_NAME$YEAR"
 
 # Check if an alternate API key file path or extension was given
 if [[ "$API_KEY" != "/etc/ipa/.panrc" ]]; then
-    if [ -d "API_KEY" ]; then
+    if [ -d "$API_KEY" ]; then
         # Parsed string is a directory
         API_KEY="${API_KEY}/.panrc"
     elif [[ "$API_KEY" != *\/* ]]; then
@@ -219,7 +219,7 @@ else
 	show_help >&2
 	exit 10
 fi
-if ! $BLIND; then
+if [[ "$BLIND" != true ]]; then
 	# Verify the state of the certificate is MONITORING or POST_SAVED_CERT (if not in blind mode)
 	CERT_STATUS=$(ipa-getcert status -f "$CRT_FILE" -v)
 	if ! [[ "$CERT_STATUS" =~ (MONITORING|POST_SAVED_CERT) ]]; then
